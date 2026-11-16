@@ -72,7 +72,8 @@ final class DeviceManager: ObservableObject {
     // Backups
     @Published var backupFolder: URL = {
         if let test = ProcessInfo.processInfo.environment["IPHONE_BACKUP_DIR"] { return URL(fileURLWithPath: test) }
-        if let saved = UserDefaults.standard.string(forKey: "backupFolder") { return URL(fileURLWithPath: saved) }
+        if let saved = UserDefaults.standard.string(forKey: "backupFolder")
+            ?? UserDefaults(suiteName: "com.local.iPhoneAlbumExtractor.v2")?.string(forKey: "backupFolder") { return URL(fileURLWithPath: saved) }
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("iPhone Backups")
     }() { didSet { UserDefaults.standard.set(backupFolder.path, forKey: "backupFolder"); refreshBackups() } }
     @Published private(set) var backups: [BackupEntry] = []

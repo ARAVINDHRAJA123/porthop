@@ -378,7 +378,7 @@ function listDir(p) { return isAndroid() ? android.list(p, S.device, tools) : io
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1200, height: 780, minWidth: 940, minHeight: 600, backgroundColor: '#17161b', title: 'Phone Album Extractor',
+    width: 1200, height: 780, minWidth: 940, minHeight: 600, backgroundColor: '#17161b', title: 'PortHop',
     autoHideMenuBar: true, show: false,
     webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
   });

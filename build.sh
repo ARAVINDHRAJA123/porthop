@@ -1,12 +1,12 @@
 #!/bin/bash
-# Builds "iPhone Album Extractor 2.app" next to this script. Does not touch any other app.
+# Builds "PortHop.app" next to this script. Does not touch any other app.
 set -euo pipefail
 cd "$(dirname "$0")"
-APP="iPhone Album Extractor 2.app"
+APP="PortHop.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -swift-version 5 -O -target arm64-apple-macos13.0 -parse-as-library \
-  Sources/*.swift -lsqlite3 -o "$APP/Contents/MacOS/iPhoneAlbumExtractor"
+  Sources/*.swift -lsqlite3 -o "$APP/Contents/MacOS/PortHop"
 cp Info.plist "$APP/Contents/Info.plist"
 if [ ! -f AppIcon.icns ]; then
   swift make_icon.swift AppIcon.iconset && iconutil -c icns AppIcon.iconset -o AppIcon.icns && rm -rf AppIcon.iconset

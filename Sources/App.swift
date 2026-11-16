@@ -16,7 +16,7 @@ struct AlbumExtractorApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("iPhone Album Extractor") {
+        WindowGroup("PortHop") {
             RootView()
         }
         .windowToolbarStyle(.unified)

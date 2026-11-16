@@ -11,14 +11,14 @@ const { packager } = require('@electron/packager');
   const tools = path.join(stage, 'tools');
   fs.cpSync(toolsSrc, tools, { recursive: true });
   const [out] = await packager({
-    dir: __dirname, name: 'Phone Album Extractor', platform: 'win32', arch: 'x64', out: path.join(__dirname, 'dist'), overwrite: true,
+    dir: __dirname, name: 'PortHop', platform: 'win32', arch: 'x64', out: path.join(__dirname, 'dist'), overwrite: true,
     icon: path.join(__dirname, 'icon.ico'), extraResource: [tools], prune: true, asar: true,
     ignore: [/^\/(test|dist|tools-win|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
     appCopyright: 'Bundled device tools are open source; see resources/tools/licenses.',
-    win32metadata: { CompanyName: 'Phone Album Extractor', FileDescription: 'Phone Album Extractor', ProductName: 'Phone Album Extractor' },
+    win32metadata: { CompanyName: 'PortHop', FileDescription: 'PortHop', ProductName: 'PortHop' },
   });
   fs.copyFileSync(path.join(__dirname, 'README.md'), path.join(out, 'READ ME FIRST.txt'));
-  const zip = path.join(__dirname, 'dist', 'Phone-Album-Extractor-Windows.zip');
+  const zip = path.join(__dirname, 'dist', 'PortHop-Windows.zip');
   fs.rmSync(zip, { force: true });
   execFileSync('zip', ['-r', '-q', '-X', zip, path.basename(out)], { cwd: path.dirname(out) });
   fs.rmSync(stage, { recursive: true, force: true });

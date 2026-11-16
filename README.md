@@ -1,10 +1,10 @@
-# iPhone Album Extractor 2
+# PortHop
 
 A native macOS app (Apple Silicon) that copies photos and videos from an iPhone or iPad to a Mac folder or an external drive over USB. Standalone: the device tools it needs are bundled inside the app.
 
 ## Use it
 
-1. Open **iPhone Album Extractor 2.app**.
+1. Open **PortHop** (from Applications after `./build.sh`).
 2. Plug in the iPhone or iPad, unlock it, tap **Trust** if asked. It appears by itself. With two devices plugged in, switch between them from the device card.
 3. Pick **Hidden** (or any album), sort or filter, then **Export All…** or select items and **Export Selected…**.
 4. Choose a folder or an external drive, then **Copy**. The summary shows what was copied, what was already there and anything that couldn't be copied.
@@ -68,4 +68,4 @@ The app reads the device's internal `PhotoData/Photos.sqlite`, which Apple does 
 
 Apple Silicon. The bundled device tools come from Homebrew and set the minimum macOS version (currently macOS 27.2; `build.sh` records it in the app). Not notarized: on another Mac, right-click → Open the first time.
 
-Bundled third-party tools are listed in `Licenses/`.
+PortHop is released under the MIT licence (see `LICENSE`). Bundled third-party tools keep their own licences, listed in `Licenses/`.

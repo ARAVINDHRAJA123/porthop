@@ -196,7 +196,7 @@ struct StatusView: View {
                     .help("Look for a device again")
             }
         }
-        .navigationTitle("iPhone Album Extractor")
+        .navigationTitle("PortHop")
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) { pulse = true }
             withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) { drift = true }

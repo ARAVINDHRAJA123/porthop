@@ -1,4 +1,4 @@
-# Phone Album Extractor for Windows
+# PortHop for Windows
 
 Copies photos, videos and files between an iPhone, iPad or Android device and a Windows PC over USB. It is the Windows edition of the Mac app in this repository and does the same things.
 
@@ -7,8 +7,8 @@ STATUS: built and tested on a Mac against simulated devices. It has NOT yet been
 ## Before the first run (Windows 10 or 11, 64-bit)
 
 1. For iPhone or iPad: install **Apple Devices** from the Microsoft Store (or iTunes). It provides the driver Windows needs to talk to an iPhone. Without it the phone never appears.
-2. Unzip the whole **Phone Album Extractor** folder somewhere, for example your Desktop. Do not run it from inside the zip.
-3. Open **Phone Album Extractor.exe**. Windows may show "Windows protected your PC" because the app is not signed: choose More info, then Run anyway.
+2. Unzip the whole **PortHop** folder somewhere, for example your Desktop. Do not run it from inside the zip.
+3. Open **PortHop.exe**. Windows may show "Windows protected your PC" because the app is not signed: choose More info, then Run anyway.
 4. Plug in the device, unlock it, and tap **Trust** (iPhone) or **Allow** (Android).
 
 For Android: on the phone turn on USB debugging (Settings > About phone > tap Build number seven times, then Settings > Developer options > USB debugging). In the app click **Set Up Android Support** once; it downloads Google's connection tool (adb) from Google, because Google does not allow that tool to be shipped inside other apps.
@@ -37,7 +37,7 @@ Wi-Fi connection, WhatsApp transfer between phones, HEIC to JPEG conversion, pho
 npm install
 python3 fetch-tools.py      # compiles libimobiledevice 1.4.0 and the two helpers for Windows (needs zig)
 npm test                    # engine tests against simulated devices
-npm run package             # writes dist/Phone-Album-Extractor-Windows.zip
+npm run package             # writes dist/PortHop-Windows.zip
 ```
 
 Bundled third-party tools and their licences are listed in `resources/tools/VERSIONS.txt` and `resources/tools/licenses`.

@@ -3,13 +3,13 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>iPhoneAlbumExtractor</string>
+    <string>PortHop</string>
     <key>CFBundleIdentifier</key>
-    <string>com.local.iPhoneAlbumExtractor.v2</string>
+    <string>io.github.aravindhraja123.porthop</string>
     <key>CFBundleName</key>
-    <string>iPhone Album Extractor 2</string>
+    <string>PortHop</string>
     <key>CFBundleDisplayName</key>
-    <string>iPhone Album Extractor 2</string>
+    <string>PortHop</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>
