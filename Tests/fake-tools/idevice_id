@@ -1,0 +1,4 @@
+#!/bin/sh
+[ -f "$FAKE_PHONE/.unplugged" ] && exit 0
+if [ "$1" = "-l" ]; then echo "00008140-000A11223344001C"; [ -n "$FAKE_SECOND" ] && echo "00008103-000B55667788001E"; fi
+exit 0

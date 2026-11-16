@@ -1,0 +1,43 @@
+# Phone Album Extractor for Windows
+
+Copies photos, videos and files between an iPhone, iPad or Android device and a Windows PC over USB. It is the Windows edition of the Mac app in this repository and does the same things.
+
+STATUS: built and tested on a Mac against simulated devices. It has NOT yet been run on a real Windows PC. Treat the first run as a test.
+
+## Before the first run (Windows 10 or 11, 64-bit)
+
+1. For iPhone or iPad: install **Apple Devices** from the Microsoft Store (or iTunes). It provides the driver Windows needs to talk to an iPhone. Without it the phone never appears.
+2. Unzip the whole **Phone Album Extractor** folder somewhere, for example your Desktop. Do not run it from inside the zip.
+3. Open **Phone Album Extractor.exe**. Windows may show "Windows protected your PC" because the app is not signed: choose More info, then Run anyway.
+4. Plug in the device, unlock it, and tap **Trust** (iPhone) or **Allow** (Android).
+
+For Android: on the phone turn on USB debugging (Settings > About phone > tap Build number seven times, then Settings > Developer options > USB debugging). In the app click **Set Up Android Support** once; it downloads Google's connection tool (adb) from Google, because Google does not allow that tool to be shipped inside other apps.
+
+## What it does
+
+- iPhone and iPad: every album including Hidden, sort by size, name, date and more, filters and search, export all or selected items to a folder or an external drive. Exporting again into the same folder skips what is already there. Nothing is ever overwritten and nothing on the device is changed.
+- Send files into apps that share a folder (video players, readers), make folders, copy their files back.
+- Backups: a standard full device backup into a folder or drive of your choice, and Restore to put one back onto a device (asks for a typed confirmation first; not yet verified on a real device).
+- From your backup: Messages, WhatsApp, Contacts, Notes (title and opening lines), Calendar, Call Log, Safari, and every file in the backup. Works with password-protected backups; the password is never saved. Each list saves as a spreadsheet (CSV) file.
+- Device overview: battery, charge cycles, health, storage, identifiers, Restart and Sleep.
+- Android: browse shared storage, copy both ways, device overview.
+
+## Not included
+
+Wi-Fi connection, WhatsApp transfer between phones, HEIC to JPEG conversion, photo thumbnails grid.
+
+## Known unknowns on Windows
+
+- The iPhone tools are libimobiledevice 1.4.0 (the same version as the Mac app), compiled from the official source on a Mac. They have not yet been run on Windows.
+- The file-copy helper (`afcclient.exe`) and the app-list helper (`applist.exe`) were written for this app, because the official file-copy tool cannot be driven by another program on Windows. They have not been run on Windows or against a real device.
+
+## Building it yourself (on a Mac)
+
+```
+npm install
+python3 fetch-tools.py      # compiles libimobiledevice 1.4.0 and the two helpers for Windows (needs zig)
+npm test                    # engine tests against simulated devices
+npm run package             # writes dist/Phone-Album-Extractor-Windows.zip
+```
+
+Bundled third-party tools and their licences are listed in `resources/tools/VERSIONS.txt` and `resources/tools/licenses`.

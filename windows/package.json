@@ -1,0 +1,17 @@
+{
+  "name": "phone-album-extractor",
+  "productName": "Phone Album Extractor",
+  "version": "0.1.0",
+  "description": "Copy photos, files and backups between an iPhone, iPad or Android device and a Windows PC over USB.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node test/run.js",
+    "package": "node package-win.js"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "electron": "^45.3.1"
+  }
+}

@@ -1,0 +1,18 @@
+#!/bin/sh
+# Stand-in for idevicebackup2: pretends to back up into the last argument.
+for a in "$@"; do DIR="$a"; done
+case " $* " in *" restore "*)
+  # Stand-in restore: records what it was asked to do, changes nothing.
+  echo "$* | password=${BACKUP_PASSWORD:-none}" > "$DIR/restore-request.txt"
+  if [ -n "$FAKE_REFUSED" ]; then echo "ErrorCode 211: Restore refused by device (MBErrorDomain/211)"; echo "Restore Failed (Error Code 211)."; exit 1; fi
+  if [ -n "$FAKE_FINDMY" ]; then echo "ERROR: Could not perform restore. Please disable Find My iPhone on the device."; exit 1; fi
+  for p in 25 60 100; do printf "\r[=====     ] %3d%% Finished\n" $p; sleep 0.2; done
+  echo "Restore Successful."; exit 0;;
+esac
+mkdir -p "$DIR/00008140-000A11223344001C"
+echo "Backup directory is \"$DIR\""; echo "Started \"com.apple.mobilebackup2\" service on port 50000."
+for p in 5 20 35 50 65 80 95 100; do printf "\r[==========          ] %3d%% Finished\nReceiving files\n" $p; sleep 0.7; done
+cat > "$DIR/00008140-000A11223344001C/Info.plist" <<EOP
+<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict><key>Device Name</key><string>Test iPhone</string><key>Product Version</key><string>27.2</string><key>Last Backup Date</key><date>2026-11-10T15:00:00Z</date></dict></plist>
+EOP
+echo "Backup Successful."

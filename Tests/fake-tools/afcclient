@@ -1,0 +1,45 @@
+#!/usr/bin/env python3
+# Stand-in for afcclient that serves files from $FAKE_PHONE, for testing without a device.
+import sys, os, shlex, shutil, time
+ROOT=os.environ["FAKE_PHONE"]
+args=sys.argv[1:]
+while args and args[0] in("-u","-n","--documents"):
+    if args[0]=="--documents": ROOT=os.path.join(ROOT,"Apps",args[1])
+    args = args[1:] if args[0]=="-n" else args[2:]
+if args and args[0]=="--": args=args[1:]
+elif args and any(a.startswith("-") for a in args[1:]): print("afcclient: invalid option"); sys.exit(1)
+def rp(p): return os.path.join(ROOT, p.lstrip("/"))
+def do(a):
+    if not a: return
+    c=a[0]
+    if c=="get":
+        rest=[x for x in a[1:] if not x.startswith("-")]
+        src,dst=rp(rest[0]),rest[1]
+        if os.path.exists(dst): print("Error: Failed to overwrite existing file without '-f' option: "+dst); return
+        if os.path.isdir(src): shutil.copytree(src,dst); return
+        if not os.path.exists(src): print("Error: Failed to open file"); return
+        time.sleep(float(os.environ.get("FAKE_DELAY","0")))
+        shutil.copyfile(src,dst)
+    elif c=="put":
+        rest=[x for x in a[1:] if not x.startswith("-")]
+        src,dst=rest[0],rp(rest[1])
+        if os.path.exists(dst): print("Error: Failed to write into existing file without '-f' option: "+dst); return
+        if os.path.isdir(src): shutil.copytree(src,dst)
+        else: shutil.copyfile(src,dst)
+    elif c=="mkdir":
+        os.makedirs(rp(a[1]))
+    elif c=="info":
+        p=rp(a[1])
+        if os.path.exists(p): print('{\n  "st_size": %d,\n  "st_ifmt": "S_IFREG"\n}'%os.path.getsize(p))
+        else: print("Error: Failed to get file info"); sys.exit(1)
+    elif c=="ls":
+        p=rp(a[-1])
+        for n in sorted(os.listdir(p)):
+            f=os.path.join(p,n); d=os.path.isdir(f)
+            print("%s    2 mobile mobile %10d 10 Nov 2026 18:34:48 %s"%("drwxr-xr-x" if d else "-rw-r--r--",64 if d else os.path.getsize(f),n))
+if args: do(args)
+else:
+    for line in sys.stdin:
+        t=shlex.split(line)
+        if t and t[0] in("quit","exit"): break
+        do(t)

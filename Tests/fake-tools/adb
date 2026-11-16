@@ -1,0 +1,53 @@
+#!/usr/bin/env python3
+# Stand-in for Google's adb. FAKE_ANDROID is a folder that plays the part of the phone's /sdcard.
+import os, sys, shlex, shutil, time
+root = os.environ.get("FAKE_ANDROID", "")
+a = sys.argv[1:]
+if a[:1] == ["devices"]:
+    print("List of devices attached")
+    if root: print("FAKEANDROID01\t" + ("unauthorized" if os.environ.get("FAKE_ANDROID_LOCKED") else "device"))
+    print(); sys.exit(0)
+if a[:1] == ["-s"]: a = a[2:]
+if not root: sys.exit("adb: no devices/emulators found")
+def real(p):
+    assert p == "/sdcard" or p.startswith("/sdcard/"), p
+    return root + p[len("/sdcard"):]
+cmd = a[0]
+if cmd == "shell":
+    line = a[1]
+    if line == "getprop":
+        for k, v in [("ro.product.model", "Pixel 8"), ("ro.product.manufacturer", "Google"), ("ro.product.device", "shiba"),
+                     ("ro.build.version.release", "16"), ("ro.build.id", "BP1A.250505"), ("ro.serialno", "FAKEANDROID01"),
+                     ("ro.build.version.security_patch", "2026-10-05"), ("ro.product.cpu.abi", "arm64-v8a")]:
+            print("[%s]: [%s]" % (k, v))
+    elif line.startswith("getprop "): print("Pixel 8")
+    elif line.startswith("df "):
+        print("Filesystem      1K-blocks     Used Available Use% Mounted on\n/dev/fuse       119771136 60000000  59771136  51% /storage/emulated")
+    elif line == "dumpsys battery":
+        print("Current Battery Service state:\n  AC powered: false\n  USB powered: true\n  status: 2\n  health: 2\n  level: 76\n  scale: 100\n  Charging cycle count: 212")
+    elif line.startswith("ls -la "):
+        d = real(shlex.split(line)[2].rstrip("/"))
+        if not os.path.isdir(d): sys.exit(1)
+        print("total 8")
+        for n in sorted(os.listdir(d)):
+            p = os.path.join(d, n); st = os.stat(p)
+            print("%s 1 u0_a1 media_rw %d %s %s" % ("drwxrwx---" if os.path.isdir(p) else "-rw-rw----", st.st_size,
+                                                   time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)), n), end="\r\n")
+    elif line.startswith("mkdir "):
+        d = real(shlex.split(line)[1])
+        if os.path.exists(d): sys.exit(1)
+        os.mkdir(d); print("made")
+    elif line.startswith("input "): pass
+    else: sys.exit(1)
+elif cmd == "pull":
+    src, dst = real(a[-2]), a[-1]
+    time.sleep(float(os.environ.get("FAKE_DELAY", "0")))
+    if os.path.isdir(src): shutil.copytree(src, dst)
+    elif os.path.isfile(src): shutil.copy2(src, dst)
+    else: sys.exit("adb: error: remote object does not exist")
+elif cmd == "push":
+    src, dst = a[-2], real(a[-1])
+    if os.path.isdir(src): shutil.copytree(src, dst)
+    else: shutil.copy2(src, dst)
+elif cmd == "reboot": pass
+else: sys.exit(1)

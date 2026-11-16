@@ -1,0 +1,9 @@
+#!/bin/sh
+case "$*" in
+ *103-000B*DeviceName*) echo "Test iPad Pro";;
+ *DeviceName*) echo "Test iPhone";;
+ *disk_usage*) echo "TotalDiskCapacity: 256000000000"; echo "AmountDataAvailable: 91000000000";;
+ *battery*) echo "BatteryCurrentCapacity: 82";;
+ *103-000B*) echo "DeviceName: Test iPad Pro"; echo "ProductType: iPad13,8"; echo "DeviceClass: iPad"; echo "ProductVersion: 27.2"; echo "BuildVersion: 25C56"; echo "SerialNumber: TESTSERIAL02";;
+ *) echo "DeviceName: Test iPhone"; echo "ProductType: iPhone16,2"; echo "DeviceClass: iPhone"; echo "ProductVersion: 27.2"; echo "BuildVersion: 25C56"; echo "SerialNumber: TESTSERIAL01";;
+esac
