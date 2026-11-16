@@ -1,3 +1,5 @@
+<img src="screenshots/icon.png" width="128" alt="PortHop icon">
+
 # PortHop
 
 A native macOS app (Apple Silicon) that copies photos and videos from an iPhone or iPad to a Mac folder or an external drive over USB. Standalone: the device tools it needs are bundled inside the app.
