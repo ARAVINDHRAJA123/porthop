@@ -23,7 +23,7 @@ async function findDevices(tools) {
   };
   const seen = new Set(), out = [];
   for (const u of await all('-l')) if (!seen.has(u)) { seen.add(u); out.push({ udid: u, isNetwork: false, kind: 'apple' }); }
-  for (const u of await all('-n')) if (!seen.has(u)) { seen.add(u); out.push({ udid: u, isNetwork: true, kind: 'apple' }); }
+  // USB only: an iPhone that is merely on the same Wi-Fi is not "connected", and reading a library over Wi-Fi crawls.
   return out;
 }
 
@@ -199,11 +199,18 @@ async function power(action, device, tools) {
 
 /// A small preview picture the device keeps for each photo. Returns a local path or null.
 async function thumbnail(asset, device, tools, cacheDir) {
-  const out = path.join(cacheDir, `${asset.id}.jpg`);
-  if (fileSize(out) > 0) return out;
   fs.mkdirSync(cacheDir, { recursive: true });
-  await run(tools.afc, [...base(device), '--', 'get', `PhotoData/Thumbnails/V2/${asset.remotePath}/5005.JPG`, out], { timeout: 30 });
-  return fileSize(out) > 0 ? out : null;
+  const small = path.join(cacheDir, `${asset.id}_a.jpg`), smaller = path.join(cacheDir, `${asset.id}_b.jpg`);
+  for (const f of [small, smaller]) if (fileSize(f) > 0) return f;
+  // iOS keeps small pre-rendered JPEGs beside the library; the original is only fetched when they are missing.
+  const r1 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5005.JPG`), r2 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5003.JPG`);
+  if (r1 && r2) await run(tools.afc, base(device), { stdin: `get ${r1} ${quote(small)}\nget ${r2} ${quote(smaller)}\nquit\n`, timeout: 30 });
+  for (const f of [small, smaller]) if (fileSize(f) > 0) return f;
+  // The browser window can show JPEG, PNG and GIF originals, but not HEIC.
+  if (asset.isVideo || !/^(JPG|JPEG|PNG|GIF)$/.test(asset.ext) || asset.fileSize > 30_000_000) return null;
+  const full = path.join(cacheDir, `${asset.id}_full.${asset.ext.toLowerCase()}`);
+  if (fileSize(full) <= 0) await run(tools.afc, [...base(device), '--', 'get', asset.remotePath, full], { timeout: 60 });
+  return fileSize(full) > 0 ? full : null;
 }
 
 module.exports = { base, quote, findDevices, name, isConnected, details, fetchCatalog, remoteSize, list, put, mkdir, pull, apps, parseAppList, power, thumbnail, sortEntries, freeName, strip };

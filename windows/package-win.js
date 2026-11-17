@@ -10,10 +10,14 @@ const { packager } = require('@electron/packager');
   const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pae-pack-'));
   const tools = path.join(stage, 'tools');
   fs.cpSync(toolsSrc, tools, { recursive: true });
+  // The interface font and icons ship inside the app; their licences go next to the tools' licences, where the Licences menu opens.
+  fs.mkdirSync(path.join(tools, 'licenses'), { recursive: true });
+  fs.copyFileSync(path.join(__dirname, 'renderer', 'fonts', 'OFL.txt'), path.join(tools, 'licenses', 'RobotoFlex-OFL.txt'));
+  fs.copyFileSync(path.join(__dirname, 'renderer', 'icons-LICENSE.txt'), path.join(tools, 'licenses', 'MaterialSymbols-LICENSE.txt'));
   const [out] = await packager({
     dir: __dirname, name: 'PortHop', platform: 'win32', arch: 'x64', out: path.join(__dirname, 'dist'), overwrite: true,
     icon: path.join(__dirname, 'icon.ico'), extraResource: [tools], prune: true, asar: true,
-    ignore: [/^\/(test|dist|tools-win|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
+    ignore: [/^\/(test|dist|tools-win|tools|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
     appCopyright: 'Bundled device tools are open source; see resources/tools/licenses.',
     win32metadata: { CompanyName: 'PortHop', FileDescription: 'PortHop', ProductName: 'PortHop' },
   });

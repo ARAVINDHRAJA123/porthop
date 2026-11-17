@@ -1,5 +1,5 @@
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, powerSaveBlocker, nativeTheme } = require('electron');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
@@ -11,15 +11,29 @@ const { exportAssets } = require('./core/exporter');
 const bk = require('./core/backup');
 
 const env = process.env;
+// Test-only switches work only when running from source, never in the packaged app.
+const TEST = !app.isPackaged;
+process.on('unhandledRejection', (e) => console.error('Unhandled', e));
 let win = null;
 let tools = null;
 const S = {
   phase: 'searching', message: '', devices: [], names: {}, device: null, details: null,
-  smart: [], user: [], warnings: [], apps: [], busy: false, preferred: null,
+  smart: [], user: [], warnings: [], apps: [], busy: false, preferred: null, restartingSince: 0, restartingName: '', exportDest: null,
 };
 const jobs = { export: null, transfer: null, backup: null };
+let blocker = null;
+// Keeps the computer from sleeping while a copy, backup or restore runs.
+function startJob(kind) {
+  const job = jobs[kind] = new Job();
+  if (blocker == null) blocker = powerSaveBlocker.start('prevent-app-suspension');
+  return job;
+}
+function endJob(kind) {
+  jobs[kind] = null;
+  if (!Object.values(jobs).some(Boolean) && blocker != null) { powerSaveBlocker.stop(blocker); blocker = null; }
+}
 const browser = { app: null, root: '/', path: '/', entries: [] };
-let data = { reader: null, kind: null, result: null, password: env.PAE_BACKUP_PASSWORD || null, source: '' };
+let data = { reader: null, kind: null, result: null, password: (TEST && env.PAE_BACKUP_PASSWORD) || null, source: '' };
 const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'PhoneAlbumExtractor-'));
 
 // MARK: settings
@@ -28,7 +42,7 @@ const settingsFile = () => path.join(app.getPath('userData'), 'settings.json');
 let settings = {};
 function loadSettings() { try { settings = JSON.parse(fs.readFileSync(settingsFile(), 'utf8')); } catch { settings = {}; } }
 function saveSettings() { try { fs.mkdirSync(path.dirname(settingsFile()), { recursive: true }); fs.writeFileSync(settingsFile(), JSON.stringify(settings)); } catch {} }
-const backupFolder = () => env.PAE_BACKUP_DIR || settings.backupFolder || path.join(app.getPath('documents'), 'Phone Backups');
+const backupFolder = () => (TEST && env.PAE_BACKUP_DIR) || settings.backupFolder || path.join(app.getPath('documents'), 'Phone Backups');
 
 // MARK: connection
 
@@ -38,12 +52,15 @@ const albums = () => [...S.smart, ...S.user];
 const album = (id) => albums().find((a) => a.id === id);
 
 function snapshot() {
-  const al = (a) => ({ id: a.id, title: a.title, smart: a.smart, count: a.assets.length, bytes: a.assets.reduce((n, x) => n + Math.max(0, x.fileSize), 0) });
+  const al = (a) => ({ id: a.id, title: a.title, smart: a.smart, count: a.assets.length, bytes: a.assets.reduce((n, x) => n + Math.max(0, x.fileSize), 0),
+    thumbs: a.assets.filter((x) => !x.isVideo).slice(0, 3).map((x) => x.id) });
   return {
     phase: S.phase, message: S.message, device: S.device, devices: S.devices.map((d) => ({ ...d, name: S.names[d.udid] || 'Device' })),
     details: S.details, smart: S.smart.map(al), user: S.user.map(al), warnings: S.warnings, apps: S.apps,
     hasAdb: !!(tools && tools.adb), hasApple: !!(tools && tools.hasApple), canPower: !!(tools && (isAndroid() ? tools.adb : tools.diagnostics)),
     canBackup: !!(tools && tools.backup), isWindows: WIN, backupFolder: backupFolder(),
+    restarting: !!S.restartingSince && Date.now() - S.restartingSince < 600000, restartingName: S.restartingName,
+    lastHop: settings.lastHop || '', exportDest: S.exportDest || null,
   };
 }
 function push() { if (win && !win.isDestroyed()) win.webContents.send('state', snapshot()); }
@@ -63,7 +80,7 @@ async function connect(silent) {
   S.busy = true;
   try {
     if (!silent) { S.phase = 'searching'; push(); }
-    tools = locateTools(process.resourcesPath);
+    tools = locateTools(process.resourcesPath, TEST);
     if (!tools.hasApple && !tools.adb) return reset('toolsMissing');
     const found = await allDevices();
     S.devices = found;
@@ -76,7 +93,7 @@ async function connect(silent) {
         : 'The Android device is connected but did not answer. Unlock it and keep it plugged in.');
       S.device = device; S.details = info; S.names[device.udid] = info.name;
       S.smart = []; S.user = []; S.warnings = []; S.apps = [];
-      S.phase = 'ready'; push();
+      S.restartingSince = 0; S.phase = 'ready'; push();
       return;
     }
     const info = await ios.details(device, tools);
@@ -98,25 +115,31 @@ async function connect(silent) {
     }
     S.device = device; S.names[device.udid] = info.name;
     S.smart = cat.smart; S.user = cat.user; S.warnings = cat.warnings;
-    S.phase = 'ready'; push();
+    S.restartingSince = 0; S.phase = 'ready'; push();
     ios.apps(device, tools).then((list) => { if (S.device === device) { S.apps = list; push(); } });
   } finally { S.busy = false; }
 }
 
+let polling = false;
 async function poll() {
-  if (S.busy || working()) return;
-  if (['noDevice', 'needsTrust', 'toolsMissing'].includes(S.phase)) return connect(true);
-  if (S.phase !== 'ready' || !S.device) return;
-  const device = S.device;
-  const found = await allDevices();
-  if (S.device !== device || working()) return;
-  if (found.some((d) => d.udid === device.udid && !d.unauthorized)) {
-    if (found.length !== S.devices.length) {
-      for (const d of found) if (!S.names[d.udid]) S.names[d.udid] = await label(d);
-      S.devices = found; push();
-    }
-  } else if (!found.length) { S.devices = []; reset('noDevice'); }
-  else { S.preferred = null; connect(false); }
+  // A slow device check must finish before the next one starts, or checks pile up.
+  if (polling || S.busy || working()) return;
+  polling = true;
+  try {
+    if (['noDevice', 'needsTrust', 'toolsMissing'].includes(S.phase)) return await connect(true);
+    if (S.phase !== 'ready' || !S.device) return;
+    const device = S.device;
+    const found = await allDevices();
+    if (S.device !== device || working()) return;
+    if (found.some((d) => d.udid === device.udid && !d.unauthorized)) {
+      if (found.length !== S.devices.length) {
+        for (const d of found) if (!S.names[d.udid]) S.names[d.udid] = await label(d);
+        S.devices = found; push();
+      }
+    } else if (!found.length) { S.devices = []; reset('noDevice'); }
+    else { S.preferred = null; connect(false); }
+  } catch (e) { console.error('poll', e); }
+  finally { polling = false; }
 }
 
 // MARK: helpers
@@ -151,6 +174,7 @@ async function drives() {
     try {
       for (const n of fs.readdirSync('/Volumes')) {
         const p = path.join('/Volumes', n);
+        if (n.startsWith('.') || /^(Recovery|Preboot|VM|Update|xarts|iSCPreboot|Hardware)$/.test(n)) continue;
         try { if (fs.realpathSync(p) === '/') continue; const st = fs.statfsSync(p); out.push({ path: p, name: n, free: Number(st.bavail) * Number(st.bsize), format: '', removable: true }); } catch {}
       }
     } catch {}
@@ -193,21 +217,32 @@ const handlers = {
   drives,
   space: (p) => freeSpace(p),
   defaults: () => ({ pictures: path.join(app.getPath('pictures'), 'Phone Export'), downloads: app.getPath('downloads') }),
-  reveal: (p) => { if (fs.existsSync(p)) { if (fs.statSync(p).isDirectory()) shell.openPath(p); else shell.showItemInFolder(p); } },
+  reveal: (p) => {
+    // A folder that does not exist yet (nothing copied there so far) opens its nearest existing parent.
+    let t = p;
+    while (t && !fs.existsSync(t)) { const up = path.dirname(t); if (up === t) return; t = up; }
+    if (fs.statSync(t).isDirectory()) shell.openPath(t); else shell.showItemInFolder(t);
+  },
   copy: (text) => { require('electron').clipboard.writeText(String(text)); },
 
   'export:start': async ({ query, ids, dest, options }) => {
     if (working() || !S.device || isAndroid()) return null;
     let assets = rowsFor(query);
     if (ids) { const set = new Set(ids); assets = assets.filter((a) => set.has(a.id)); }
-    const job = jobs.export = new Job();
+    const job = startJob('export');
+    rememberDestination(dest);
+    S.exportDest = dest; push();
     let last = 0;
     try {
       const summary = await exportAssets({ assets, dest, options, device: S.device, tools, job,
         onProgress: (p) => { const now = Date.now(); if (now - last > 200) { last = now; send('export:progress', p); } } });
       summary.failedIds = summary.failures.map((f) => f.id);
+      if (summary.copied > 0) {
+        settings.lastHop = `${summary.copied.toLocaleString()} item${summary.copied === 1 ? '' : 's'} to ${path.basename(dest)} · ${new Date().toLocaleString()}`;
+        saveSettings();
+      }
       return summary;
-    } finally { jobs.export = null; }
+    } finally { endJob('export'); S.exportDest = null; push(); }
   },
   'export:stop': () => { if (jobs.export) jobs.export.cancel(); },
 
@@ -228,7 +263,7 @@ const handlers = {
   },
   'files:upload': async (paths) => {
     if (working() || !S.device || !(browser.app || isAndroid()) || !paths.length) return null;
-    const job = jobs.transfer = new Job(), dir = browser.path, existing = new Set(browser.entries.map((e) => e.name));
+    const job = startJob('transfer'), dir = browser.path, existing = new Set(browser.entries.map((e) => e.name));
     let added = 0;
     try {
       for (let i = 0; i < paths.length && !job.cancelled; i++) {
@@ -238,25 +273,16 @@ const handlers = {
       }
       browser.entries = await listDir(dir);
       return { added, total: paths.length, cancelled: job.cancelled, entries: browser.entries };
-    } finally { jobs.transfer = null; }
+    } finally { endJob('transfer'); }
   },
-  'files:download': async ({ paths, folder }) => {
-    const chosen = browser.entries.filter((e) => paths.includes(e.path));
-    if (working() || !S.device || !chosen.length) return null;
-    const job = jobs.transfer = new Job(), saved = [], reserved = new Set();
-    try {
-      for (let i = 0; i < chosen.length && !job.cancelled; i++) {
-        const e = chosen[i];
-        send('files:progress', `Copying ${i + 1} of ${chosen.length}: ${e.name}`);
-        const dest = uniquePath(path.join(folder, e.name.replace(/[\\/:*?"<>|]/g, '-')), reserved);
-        reserved.add(dest);
-        const ok = isAndroid() ? await android.pull(e, dest, S.device, tools, job) : await ios.pull(e, dest, browser.app, S.device, tools, job);
-        if (ok && !job.cancelled) saved.push(dest); else if (!e.isDirectory) fs.rmSync(dest, { force: true });
-      }
-      if (saved.length) shell.showItemInFolder(saved[0]);
-      return { saved: saved.length, total: chosen.length, cancelled: job.cancelled };
-    } finally { jobs.transfer = null; }
+  'files:download': ({ paths, folder }) => download(browser.entries.filter((e) => paths.includes(e.path)), folder),
+  'folders:copy': ({ paths, folder }) => {
+    rememberDestination(folder);
+    return download(paths.map((p) => ({ name: path.posix.basename(p), path: p, isDirectory: true, size: 0 })), folder);
   },
+  'album:months': (id) => months(id),
+  destinations: () => destinations(),
+  'dest:remember': (p) => { rememberDestination(p); return destinations(); },
   'files:mkdir': async (name) => {
     const clean = String(name).trim().replace(/[\\/]/g, '-');
     if (!S.device || !clean || !(browser.app || isAndroid())) return null;
@@ -269,32 +295,36 @@ const handlers = {
 
   power: async (action) => {
     if (!S.device || working()) return false;
-    return isAndroid() ? android.power(action, S.device, tools) : ios.power(action, S.device, tools);
+    const ok = await (isAndroid() ? android.power(action, S.device, tools) : ios.power(action, S.device, tools));
+    if (ok && action === 'restart') { S.restartingSince = Date.now(); S.restartingName = S.details ? S.details.name : ''; }
+    return ok;
   },
 
   'backup:list': () => bk.existing(backupFolder()),
   'backup:folder': (p) => { settings.backupFolder = p; saveSettings(); push(); return bk.existing(p); },
   'backup:start': async () => {
     if (working() || !S.device || isAndroid()) return 'Connect an iPhone or iPad first.';
-    const job = jobs.backup = new Job();
+    const job = startJob('backup');
     let last = 0;
     try {
       return await bk.runBackup(S.device, tools, backupFolder(), job, (percent, phase) => {
         const now = Date.now(); if (now - last > 250) { last = now; send('backup:progress', { percent, phase }); }
       });
-    } finally { jobs.backup = null; }
+    } finally { endJob('backup'); }
   },
   'backup:restore': async ({ path: folder, password }) => {
     if (working() || !S.device || isAndroid()) return 'Connect an iPhone or iPad first.';
     const entry = bk.existing(backupFolder()).find((b) => b.path === folder);
     if (!entry) return 'That backup is no longer in the folder.';
-    const job = jobs.backup = new Job();
+    const job = startJob('backup');
     let last = 0;
     try {
-      return await bk.runRestore(entry, S.device, tools, password || null, job, (percent, phase) => {
+      const problem = await bk.runRestore(entry, S.device, tools, password || null, job, (percent, phase) => {
         const now = Date.now(); if (now - last > 250) { last = now; send('backup:progress', { percent, phase }); }
       });
-    } finally { jobs.backup = null; }
+      if (problem === null) { S.restartingSince = Date.now(); S.restartingName = S.details ? S.details.name : ''; }
+      return problem;
+    } finally { endJob('backup'); }
   },
   'backup:stop': () => { if (jobs.backup) jobs.backup.cancel(); },
 
@@ -358,11 +388,23 @@ const handlers = {
         : await run('unzip', ['-o', '-q', zip, '-d', dir], { timeout: 180 });
       fs.rmSync(zip, { force: true });
       if (!r.ok) return 'The download finished but could not be unpacked.';
-      tools = locateTools(process.resourcesPath);
+      tools = locateTools(process.resourcesPath, TEST);
       push();
       connect(true);
       return tools.adb ? null : 'The download finished but the Android tool was not found inside it.';
     } catch (e) { return `The download did not finish (${e.message}). Check the internet connection and try again.`; }
+  },
+
+  licences: () => {
+    const packaged = path.join(process.resourcesPath, 'tools', 'licenses'), source = path.join(__dirname, 'tools-win', 'licenses');
+    const p = fs.existsSync(packaged) ? packaged : source;
+    if (fs.existsSync(p)) shell.openPath(p);
+  },
+  github: () => shell.openExternal('https://github.com/ARAVINDHRAJA123/porthop'),
+  // Light, dark or following Windows ('system'). The page's colours switch with it through prefers-color-scheme.
+  appearance: (v) => {
+    if (['system', 'light', 'dark'].includes(v)) { settings.appearance = v; saveSettings(); nativeTheme.themeSource = v; }
+    return settings.appearance || 'system';
   },
 
   thumb: async (id) => {
@@ -374,32 +416,110 @@ const handlers = {
 
 function listDir(p) { return isAndroid() ? android.list(p, S.device, tools) : ios.list(p, browser.app, S.device, tools); }
 
+// Device → computer for files and folders, never overwriting.
+async function download(chosen, folder) {
+  if (working() || !S.device || !chosen.length) return null;
+  try { fs.mkdirSync(folder, { recursive: true }); } catch {}
+  const job = startJob('transfer'), saved = [], reserved = new Set();
+  try {
+    for (let i = 0; i < chosen.length && !job.cancelled; i++) {
+      const e = chosen[i];
+      send('files:progress', `Copying ${i + 1} of ${chosen.length}: ${e.name}`);
+      const dest = uniquePath(path.join(folder, e.name.replace(/[\\/:*?"<>|]/g, '-')), reserved);
+      reserved.add(dest);
+      const ok = isAndroid() ? await android.pull(e, dest, S.device, tools, job) : await ios.pull(e, dest, browser.app, S.device, tools, job);
+      if (ok && !job.cancelled) saved.push(dest); else if (!e.isDirectory) fs.rmSync(dest, { force: true });
+    }
+    if (saved.length) shell.showItemInFolder(saved[0]);
+    return { saved: saved.length, total: chosen.length, cancelled: job.cancelled };
+  } finally { endJob('transfer'); }
+}
+
+// Months of a group, oldest to newest including empty ones, for the timeline strip. ts is in the catalog's own units.
+function months(id) {
+  const a = album(id);
+  if (!a) return [];
+  const counts = new Map();
+  let lo = Infinity, hi = -Infinity;
+  for (const x of a.assets) {
+    if (!x.ts) continue;
+    const d = new Date((x.ts + 978307200) * 1000), key = d.getFullYear() * 12 + d.getMonth();
+    lo = Math.min(lo, key); hi = Math.max(hi, key);
+    const v = counts.get(key) || [0, 0];
+    v[x.isVideo ? 1 : 0]++;
+    counts.set(key, v);
+  }
+  if (!(lo <= hi) || hi - lo > 1200) return [];
+  const out = [];
+  for (let k = lo; k <= hi; k++) {
+    const s = new Date(Math.floor(k / 12), k % 12, 1), e = new Date(Math.floor(k / 12), k % 12 + 1, 1);
+    const v = counts.get(k) || [0, 0];
+    out.push({ key: k, label: s.toLocaleString(undefined, { month: 'short', year: 'numeric' }), photos: v[0], videos: v[1],
+      from: s.getTime() / 1000 - 978307200, to: e.getTime() / 1000 - 978307200 - 1 });
+  }
+  return out;
+}
+
+// Places copies can go: the Pictures folder, each drive, and folders used before.
+let driveCache = { at: 0, list: [] };
+async function destinations() {
+  if (Date.now() - driveCache.at > 10000) driveCache = { at: Date.now(), list: await drives() };
+  const folder = `${(S.details && S.details.name) || 'Phone'} Photos`.replace(/[\\/:*?"<>|]/g, '-');
+  const pictures = app.getPath('pictures');
+  const out = [{ id: 'pictures', kind: 'pictures', name: 'Pictures', detail: 'This computer', path: path.join(pictures, folder), free: freeSpace(pictures) }];
+  for (const d of driveCache.list) {
+    out.push({ id: d.path, kind: 'drive', name: d.name, detail: d.format || 'Drive', path: path.join(d.path, folder), free: d.free,
+      isFAT: /^FAT/i.test(d.format || '') });
+  }
+  for (const r of settings.recents || []) {
+    if (out.filter((x) => x.kind === 'recent').length >= 3) break;
+    if (!fs.existsSync(r) || out.some((x) => x.path === r)) continue;
+    out.push({ id: 'recent:' + r, kind: 'recent', name: path.basename(r), detail: path.dirname(r), path: r });
+  }
+  return out;
+}
+
+function rememberDestination(p) {
+  settings.recents = [p, ...(settings.recents || []).filter((x) => x !== p)].slice(0, 6);
+  saveSettings();
+}
+
 // MARK: app
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 1200, height: 780, minWidth: 940, minHeight: 600, backgroundColor: '#17161b', title: 'PortHop',
+    width: 1200, height: 780, minWidth: 940, minHeight: 600, backgroundColor: nativeTheme.shouldUseDarkColors ? '#070e1b' : '#f9f9ff', title: 'PortHop',
     autoHideMenuBar: true, show: false,
-    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false },
+    webPreferences: { preload: path.join(__dirname, 'preload.js'), contextIsolation: true, nodeIntegration: false, sandbox: false,
+      additionalArguments: TEST && env.PAE_UI_TEST ? ['--pae-ui-test=' + env.PAE_UI_TEST] : [] },
   });
   win.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   win.once('ready-to-show', () => win.show());
-  if (env.PAE_SHOT) win.webContents.on('console-message', (e) => console.log('[page]', e.message, e.lineNumber));
+  if (TEST && env.PAE_SHOT) win.webContents.on('console-message', (e) => console.log('[page]', e.message, e.lineNumber));
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (e) => e.preventDefault());
 }
 
 app.whenReady().then(() => {
   loadSettings();
+  nativeTheme.themeSource = (TEST && process.env.PAE_APPEARANCE) || settings.appearance || 'system';
   bk.purgeTemp();
   if (WIN) Menu.setApplicationMenu(null);
-  for (const [name, fn] of Object.entries(handlers)) ipcMain.handle(name, (_e, arg) => fn(arg));
+  for (const [name, fn] of Object.entries(handlers)) {
+    ipcMain.handle(name, async (_e, arg) => {
+      try { return await fn(arg); }
+      catch (err) { console.error(name, err); throw new Error(err && err.message ? err.message : String(err)); }
+    });
+  }
   createWindow();
   connect(false);
   setInterval(poll, 3000);
-  if (env.PAE_SHOT) {
+  if (TEST && env.PAE_SHOT) {
     setTimeout(async () => {
       if (env.PAE_EVAL) { try { await win.webContents.executeJavaScript(env.PAE_EVAL); } catch (e) { console.log('[page] eval', e.message); } await new Promise((r) => setTimeout(r, 1200)); }
+      // Move the pointer off the page so no card shows its hover state in the picture.
+      win.webContents.sendInputEvent({ type: 'mouseMove', x: 1, y: 1 });
+      await new Promise((r) => setTimeout(r, 600));
       const img = await win.webContents.capturePage();
       fs.writeFileSync(env.PAE_SHOT, img.toPNG());
       app.quit();

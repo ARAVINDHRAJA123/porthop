@@ -2,131 +2,87 @@ import SwiftUI
 import AppKit
 import Quartz
 
-// MARK: - Theme
-
-enum Theme {
-    // Violet-to-coral: deliberately not the blue or green every other device manager uses.
-    static let accent = Color(red: 0.62, green: 0.36, blue: 1.0)
-    static let gradient = LinearGradient(
-        colors: [Color(red: 0.49, green: 0.33, blue: 1.0), Color(red: 0.93, green: 0.33, blue: 0.67), Color(red: 1.0, green: 0.52, blue: 0.40)],
-        startPoint: .topLeading, endPoint: .bottomTrailing)
-
-    static func color(for id: String) -> Color {
-        switch id {
-        case "smart_hidden": return .indigo
-        case "smart_all": return .blue
-        case "smart_favorites": return .pink
-        case "smart_videos": return .purple
-        case "smart_live": return .orange
-        case "smart_screenshots": return .teal
-        case "smart_selfies": return .green
-        case "smart_trashed": return .gray
-        case "nav_device": return .blue
-        case "nav_files": return .gray
-        default: return .cyan
-        }
-    }
-}
-
-struct IconTile: View {
-    let symbol: String
-    let color: Color
-    var size: CGFloat = 24
-    var body: some View {
-        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
-            .fill(color.gradient)
-            .frame(width: size, height: size)
-            .overlay(Image(systemName: symbol).font(.system(size: size * 0.5, weight: .semibold)).foregroundStyle(.white))
-    }
-}
-
-struct PrimaryButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .semibold))
-            .foregroundStyle(.white)
-            .lineLimit(1).fixedSize()
-            .padding(.horizontal, 16).padding(.vertical, 8)
-            .background(Capsule().fill(Theme.gradient))
-            .shadow(color: Theme.accent.opacity(enabled ? 0.35 : 0), radius: 6, y: 2)
-            .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
-            .scaleEffect(configuration.isPressed ? 0.98 : 1)
-            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
-    }
-}
-
-struct SoftButtonStyle: ButtonStyle {
-    @Environment(\.isEnabled) private var enabled
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 13, weight: .medium))
-            .lineLimit(1).fixedSize()
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(Capsule().fill(Color.primary.opacity(configuration.isPressed ? 0.14 : 0.08)))
-            .opacity(enabled ? 1 : 0.4)
-    }
-}
-
-struct Card<Content: View>: View {
-    @ViewBuilder var content: Content
-    var body: some View {
-        content
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color(nsColor: .controlBackgroundColor)))
-            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Color.primary.opacity(0.07)))
-    }
-}
-
 // MARK: - Root
 
 struct RootView: View {
     @StateObject private var m = DeviceManager()
     @AppStorage("modernTransitions") private var modernTransitions = true
+    @State private var askText = ""
+    @FocusState private var askFocused: Bool
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(m: m)
-                .navigationSplitViewColumnWidth(min: 230, ideal: 250, max: 320)
-        } detail: {
+        ZStack(alignment: .top) {
+            ShoreBackground()
             ZStack {
                 if !m.isReady {
                     StatusView(m: m).transition(.opacity)
                 } else {
-                    Group {
-                        if m.selection == "nav_home" || m.selection == nil {
-                            HomeView(m: m)
-                        } else if m.selection == "nav_device" {
-                            DeviceView(m: m)
-                        } else if m.selection == "nav_backup" {
-                            BackupView(m: m)
-                        } else if (m.selection ?? "").hasPrefix("bk:") {
-                            BackupDataView(m: m)
-                        } else if m.selection == "nav_files" || (m.selection ?? "").hasPrefix("app:") {
-                            FilesView(m: m)
-                        } else {
-                            AlbumView(m: m)
-                        }
-                    }
-                    .id(m.selection ?? "nav_home")
-                    .transition(modernTransitions ? .glide : .opacity)
+                    route
+                        .id(m.selection ?? "nav_home")
+                        .transition(modernTransitions ? .glide : .opacity)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
-            .animation(.easeInOut(duration: 0.3), value: m.isReady)
-            .animation(modernTransitions ? .spring(response: 0.42, dampingFraction: 0.86) : .easeInOut(duration: 0.15), value: m.selection)
+            if m.isReady && (askFocused || (uiTestBuild && !askText.isEmpty)) {
+                AskPanel(m: m, text: $askText, focused: $askFocused)
+                    .padding(.top, 6)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .zIndex(2)
+            }
         }
+        .animation(.easeInOut(duration: 0.3), value: m.isReady)
+        .animation(modernTransitions ? .spring(response: 0.42, dampingFraction: 0.86) : .easeInOut(duration: 0.15), value: m.selection)
+        .animation(.easeOut(duration: 0.15), value: askFocused)
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                if m.isReady && (m.selection ?? "nav_home") != "nav_home" {
+                    Button { m.selection = "nav_home" } label: { Label("Shores", systemImage: "chevron.left") }
+                        .help("Back to Shores (⌘[)")
+                        .keyboardShortcut("[", modifiers: .command)
+                }
+                DevicePill(m: m)
+            }
+            ToolbarItem(placement: .principal) { AskField(m: m, text: $askText, focused: $askFocused) }
+            ToolbarItemGroup(placement: .primaryAction) {
+                ActivityBadge(m: m)
+                SettingsMenu()
+            }
+        }
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .tint(Theme.accent)
-        .frame(minWidth: 980, minHeight: 640)
+        .frame(minWidth: 1020, minHeight: 680)
+        .background(Button("") { askFocused = true }.keyboardShortcut("k", modifiers: .command).opacity(0))
         .sheet(item: $m.exportRequest) { ExportSheet(m: m, request: $0) }
         .sheet(item: $m.summary) { SummarySheet(m: m, summary: $0) }
         .sheet(isPresented: Binding(get: { m.previewAsset != nil }, set: { if !$0 { m.previewAsset = nil } })) {
             PreviewSheet(m: m)
         }
-        .onAppear { m.start() }
+        .onAppear {
+            m.start()
+            if uiTestBuild, let ask = ProcessInfo.processInfo.environment["IPHONE_UI_ASK"] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 4) { askFocused = true; askText = ask }
+            }
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didMountNotification)) { _ in m.refreshVolumes() }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didUnmountNotification)) { _ in m.refreshVolumes() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in m.shutdown() }
+    }
+
+    @ViewBuilder private var route: some View {
+        let s = m.selection ?? "nav_home"
+        if s == "nav_home" {
+            ShoresView(m: m)
+        } else if s == "nav_device" {
+            DeviceView(m: m)
+        } else if s == "nav_backup" {
+            BackupView(m: m)
+        } else if s.hasPrefix("bk:") {
+            BackupDataView(m: m)
+        } else if s == "nav_files" || s.hasPrefix("app:") {
+            FilesView(m: m)
+        } else {
+            AlbumView(m: m)
+        }
     }
 }
 
@@ -149,7 +105,7 @@ struct AssetMenu: View {
             Button {
                 m.selectedIDs = ids
                 m.requestExport(selectedOnly: true)
-            } label: { Label("Export \(Fmt.count(ids.count)) Item\(ids.count == 1 ? "" : "s")…", systemImage: "square.and.arrow.down") }
+            } label: { Label("Copy \(Fmt.count(ids.count)) Item\(ids.count == 1 ? "" : "s")…", systemImage: "square.and.arrow.down") }
         }
     }
 }
@@ -173,7 +129,6 @@ struct AssetGrid: View {
             }
             .padding(16)
         }
-        .background(Color(nsColor: .textBackgroundColor))
     }
 
     private func click(_ a: PhotoAsset) {
@@ -303,7 +258,7 @@ struct PreviewSheet: View {
                         m.selectedIDs = [a.id]
                         m.previewAsset = nil
                         m.requestExport(selectedOnly: true)
-                    } label: { Label("Export…", systemImage: "square.and.arrow.down") }
+                    } label: { Label("Copy…", systemImage: "square.and.arrow.down") }
                     .disabled(m.isExporting)
                     Button("Done") { m.previewAsset = nil }.keyboardShortcut(.cancelAction)
                 }
@@ -331,6 +286,7 @@ struct PreviewSheet: View {
             }
         }
         .frame(width: 900, height: 660)
+        .background(Theme.bg)
     }
 
     private func step(_ d: Int) {

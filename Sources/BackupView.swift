@@ -6,6 +6,7 @@ struct BackupView: View {
     @State private var volumes: [VolumeInfo] = []
     @State private var freeBytes: Int64? = nil
     @State private var restoreTarget: BackupEntry?
+    @State private var confirmStopRestore = false
 
     private var usedOnDevice: Int64 { max(0, m.details.totalDiskBytes - m.details.freeDiskBytes) }
     private var lowSpace: Bool { if let f = freeBytes, usedOnDevice > 0, m.backups.isEmpty { return f < usedOnDevice }; return false }
@@ -76,7 +77,7 @@ struct BackupView: View {
                     if m.backupRunning {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
-                                Text(m.backupStopping ? "Stopping…" : "Backing up \(m.deviceName)").font(.headline)
+                                Text(m.backupStopping ? "Stopping…" : (m.restoring ? "Restoring \(m.deviceName)" : "Backing up \(m.deviceName)")).font(.headline)
                                 Spacer()
                                 if let p = m.backupPercent {
                                     Text("\(Int(p * 100))%").font(.system(size: 15, weight: .bold, design: .rounded)).monospacedDigit()
@@ -88,9 +89,17 @@ struct BackupView: View {
                             HStack {
                                 Text(m.backupPhase).font(.caption).foregroundStyle(.secondary)
                                 Spacer()
-                                Button("Stop") { m.stopBackup() }.buttonStyle(SoftButtonStyle()).disabled(m.backupStopping)
+                                Button("Stop") { if m.restoring { confirmStopRestore = true } else { m.stopBackup() } }
+                                    .buttonStyle(SoftButtonStyle()).disabled(m.backupStopping)
+                                    .confirmationDialog("Stop the restore?", isPresented: $confirmStopRestore, titleVisibility: .visible) {
+                                        Button("Stop Restore", role: .destructive) { m.stopBackup() }
+                                        Button("Keep Restoring", role: .cancel) {}
+                                    } message: {
+                                        Text("The \(m.deviceKind) may be left incomplete until you run the restore again.")
+                                    }
                             }
-                            Text("Keep the \(m.deviceKind) connected and unlocked. The first backup can take a long time; later ones only copy what changed.")
+                            Text(m.restoring ? "Keep the \(m.deviceKind) connected and unlocked until it restarts."
+                                 : "Keep the \(m.deviceKind) connected and unlocked. The first backup can take a long time; later ones only copy what changed.")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         .transition(.opacity)
@@ -117,6 +126,23 @@ struct BackupView: View {
                 .animation(.spring(response: 0.4, dampingFraction: 0.85), value: m.backupRunning)
 
                 if !m.backups.isEmpty {
+                    Text("Look inside your latest backup").font(.headline).padding(.top, 4)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 10)], spacing: 10) {
+                        ForEach(BackupKind.allCases) { k in
+                            Button { m.selection = "bk:\(k.rawValue)" } label: {
+                                HStack(spacing: 10) {
+                                    IconTile(symbol: k.symbol, color: k.color, size: 30)
+                                    Text(k.title).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text)
+                                    Spacer(minLength: 0)
+                                }
+                                .padding(10)
+                                .contentShape(Rectangle())
+                                .contentSurface(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .glassGroup(spacing: 10)
                     Text("Backups in this folder").font(.headline).padding(.top, 4)
                     ForEach(m.backups) { b in
                         Card {
@@ -223,5 +249,6 @@ struct RestoreSheet: View {
         }
         .padding(24)
         .frame(width: 520)
+        .background(Theme.bg)
     }
 }

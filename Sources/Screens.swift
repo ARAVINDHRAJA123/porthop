@@ -54,119 +54,9 @@ struct Pill: View {
 
 // MARK: - Sidebar
 
-struct SidebarView: View {
-    @ObservedObject var m: DeviceManager
-
-    var body: some View {
-        List(selection: $m.selection) {
-            if m.isReady {
-                Label { Text("Home") } icon: { IconTile(symbol: "house.fill", color: Theme.accent, size: 20) }.tag("nav_home")
-                if !m.isAndroid {
-                    Section("Library") {
-                        ForEach(m.smartAlbums.filter { !$0.assets.isEmpty || $0.id == "smart_hidden" }) { row($0) }
-                    }
-                }
-                if !m.userAlbums.isEmpty {
-                    Section("Albums") {
-                        ForEach(m.userAlbums) { row($0) }
-                    }
-                }
-                if !m.apps.isEmpty {
-                    Section("Send files to apps") {
-                        ForEach(m.apps) { app in
-                            Label { Text(app.name).lineLimit(1) } icon: { IconTile(symbol: "app.fill", color: .mint, size: 20) }
-                                .tag("app:\(app.id)")
-                                .help("Add files to \(app.name), or copy its files to your Mac")
-                        }
-                    }
-                }
-                if !m.isAndroid {
-                    Section("From your backup") {
-                        ForEach(BackupKind.allCases) { k in
-                            Label { Text(k.title) } icon: { IconTile(symbol: k.symbol, color: k.color, size: 20) }.tag("bk:\(k.rawValue)")
-                        }
-                    }
-                }
-                Section(m.deviceKind) {
-                    Label { Text("Overview") } icon: { IconTile(symbol: "info", color: .blue, size: 20) }.tag("nav_device")
-                    if !m.isAndroid {
-                        Label { Text("Backups") } icon: { IconTile(symbol: "clock.arrow.circlepath", color: .orange, size: 20) }.tag("nav_backup")
-                    }
-                    Label { Text(m.isAndroid ? "Phone Storage" : "Media Files") } icon: { IconTile(symbol: "folder.fill", color: m.isAndroid ? .green : .gray, size: 20) }.tag("nav_files")
-                }
-            }
-        }
-        .listStyle(.sidebar)
-        .animation(.easeInOut(duration: 0.3), value: m.isReady)
-        .safeAreaInset(edge: .top, spacing: 0) { deviceCard.padding(.horizontal, 10).padding(.top, 6).padding(.bottom, 4) }
-    }
-
-    private func row(_ album: AlbumCategory) -> some View {
-        Label {
-            Text(album.title).lineLimit(1)
-        } icon: {
-            IconTile(symbol: album.icon, color: Theme.color(for: album.id), size: 20)
-        }
-        .badge(Text(Fmt.count(album.assets.count)).monospacedDigit())
-        .tag(album.id)
-        .help("\(Fmt.count(album.assets.count)) items · \(Fmt.bytes(album.totalBytes))")
-    }
-
-    private var deviceCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(m.isReady ? AnyShapeStyle(Theme.gradient) : AnyShapeStyle(Color.secondary.opacity(0.25)))
-                    .frame(width: 38, height: 38)
-                    .overlay(Image(systemName: m.isReady ? (m.isIPad ? "ipad" : (m.isAndroid ? "smartphone" : "iphone")) : "iphone.slash")
-                        .font(.system(size: 18, weight: .medium)).foregroundStyle(.white))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(m.isReady ? m.deviceName : "No device").font(.system(size: 13, weight: .semibold)).lineLimit(1)
-                    HStack(spacing: 5) {
-                        Circle().fill(m.isReady ? Color.green : Color.secondary.opacity(0.5)).frame(width: 6, height: 6)
-                        Text(m.isReady ? "\(m.osName) \(m.details.iosVersion) · \(m.device?.isNetwork == true ? "Wi-Fi" : "USB")" : "Not connected")
-                            .font(.system(size: 11)).foregroundStyle(.secondary)
-                    }
-                }
-                Spacer(minLength: 0)
-                if m.devices.count > 1 {
-                    Menu {
-                        ForEach(m.devices, id: \.udid) { d in
-                            Button {
-                                m.switchDevice(to: d.udid)
-                            } label: {
-                                if d.udid == m.device?.udid { Label(m.deviceNames[d.udid] ?? "Device", systemImage: "checkmark") }
-                                else { Text(m.deviceNames[d.udid] ?? "Device") }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "chevron.up.chevron.down").font(.system(size: 11, weight: .semibold))
-                    }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
-                    .help("Switch between connected devices")
-                }
-            }
-            if m.isReady, m.details.totalDiskBytes > 0 {
-                VStack(alignment: .leading, spacing: 4) {
-                    StorageBar(fraction: m.details.usedFraction).frame(height: 5)
-                    Text("\(Fmt.bytes(m.details.freeDiskBytes)) free of \(Fmt.bytes(m.details.totalDiskBytes))")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
-                }
-                .transition(.opacity.combined(with: .move(edge: .top)))
-            }
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.primary.opacity(0.06)))
-        .animation(.spring(response: 0.4, dampingFraction: 0.85), value: m.isReady)
-    }
-}
-
-// MARK: - Status / onboarding
-
 struct StatusView: View {
     @ObservedObject var m: DeviceManager
     @State private var pulse = false
-    @State private var drift = false
     @State private var stepsShown = false
 
     private var phaseKey: String {
@@ -183,7 +73,6 @@ struct StatusView: View {
 
     var body: some View {
         ZStack {
-            backdrop
             VStack(spacing: 22) { content }
                 .padding(40)
                 .id(phaseKey)
@@ -199,18 +88,7 @@ struct StatusView: View {
         .navigationTitle("PortHop")
         .onAppear {
             withAnimation(.easeInOut(duration: 2.2).repeatForever(autoreverses: false)) { pulse = true }
-            withAnimation(.easeInOut(duration: 9).repeatForever(autoreverses: true)) { drift = true }
         }
-    }
-
-    private var backdrop: some View {
-        ZStack {
-            Circle().fill(Color(red: 0.49, green: 0.33, blue: 1.0).opacity(0.18)).frame(width: 520).blur(radius: 110)
-                .offset(x: drift ? -200 : -90, y: drift ? -130 : -50)
-            Circle().fill(Color(red: 1.0, green: 0.45, blue: 0.5).opacity(0.16)).frame(width: 460).blur(radius: 110)
-                .offset(x: drift ? 210 : 110, y: drift ? 140 : 60)
-        }
-        .allowsHitTesting(false)
     }
 
     @ViewBuilder private var content: some View {
@@ -219,10 +97,13 @@ struct StatusView: View {
             ProgressView().controlSize(.large)
             Text("Looking for your device…").font(.title3).foregroundStyle(.secondary)
         case .loading(let msg):
-            hero("photo.stack.fill", rings: true)
-            Text(msg).font(.title3.weight(.medium))
-            ProgressView().progressViewStyle(.linear).frame(width: 220).tint(Theme.accent)
-            Text("Large libraries can take a moment. Keep the device unlocked.").font(.callout).foregroundStyle(.secondary)
+            LinkLoader(device: m.deviceName, symbol: m.isIPad ? "ipad" : "iphone", organising: msg.hasPrefix("Organising"))
+        case .noDevice where m.isRestarting:
+            hero("arrow.clockwise", rings: true)
+            Text("\(m.deviceName) is restarting").font(.system(size: 30, weight: .bold, design: .rounded))
+            Text("It will appear here again by itself in a minute or two. If it asks, unlock it and tap Trust.")
+                .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center).frame(maxWidth: 520)
+            waiting("Waiting for it to come back")
         case .noDevice:
             hero("cable.connector", rings: true)
             VStack(spacing: 6) {
@@ -232,10 +113,11 @@ struct StatusView: View {
             HStack(spacing: 14) {
                 step(1, "cable.connector.horizontal", "Plug in", "Use a USB cable that carries data.")
                 step(2, "lock.open.fill", "Unlock & Trust", "Unlock the device and tap Trust if it asks.")
-                step(3, "photo.stack.fill", "Pick an album", "Choose Hidden or any album, then Export.")
+                step(3, "arrow.right.circle.fill", "Hop it across", "Drag a group of photos onto a folder or drive.")
             }
             .frame(maxWidth: 720)
             .onAppear { stepsShown = true }
+            if m.tools?.adb == nil { AndroidSetupRow(m: m) }
             waiting("Waiting for a device — it will appear here automatically")
         case .needsTrust(let msg):
             hero("lock.iphone", rings: true)
@@ -318,7 +200,7 @@ struct StatusView: View {
 
 struct AlbumView: View {
     @ObservedObject var m: DeviceManager
-    @AppStorage("gridMode") private var gridMode = false
+    @AppStorage("gridMode") private var gridMode = true
     @AppStorage("thumbSize") private var thumbSize = 150.0
     @Namespace private var chipSpace
 
@@ -326,14 +208,15 @@ struct AlbumView: View {
         VStack(spacing: 0) {
             header
             filterBar
+            TimelineStrip(m: m)
             ForEach(m.catalogWarnings, id: \.self) { w in
                 Label(w, systemImage: "exclamationmark.triangle.fill")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(.callout).foregroundStyle(Theme.warning)
                     .padding(.horizontal, 16).padding(.vertical, 8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color.orange.opacity(0.1))
+                    .background(Theme.warning.opacity(0.1))
             }
-            Divider()
+            Rectangle().fill(Theme.line).frame(height: 1)
             ZStack {
                 if m.visibleAssets.isEmpty {
                     emptyState.transition(.opacity)
@@ -347,38 +230,6 @@ struct AlbumView: View {
             .animation(.easeInOut(duration: 0.22), value: m.visibleAssets.isEmpty)
         }
         .safeAreaInset(edge: .bottom, spacing: 0) { ActionBar(m: m) }
-        .navigationTitle(m.deviceName)
-        .navigationSubtitle("")
-        .searchable(text: $m.searchText, placement: .toolbar, prompt: "Search name, folder or date")
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Picker("View", selection: $gridMode) {
-                    Label("List", systemImage: "list.bullet").tag(false)
-                    Label("Grid", systemImage: "square.grid.2x2").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .help("Switch between list and thumbnails")
-
-                Menu {
-                    Picker("Sort by", selection: Binding(get: { m.sortField }, set: { m.setSort($0, ascending: m.sortAscending) })) {
-                        ForEach(SortField.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.inline)
-                    Picker("Order", selection: Binding(get: { m.sortAscending }, set: { m.setSort(m.sortField, ascending: $0) })) {
-                        Text(ascendingLabel).tag(true)
-                        Text(descendingLabel).tag(false)
-                    }
-                    .pickerStyle(.inline)
-                } label: {
-                    Label("Sort", systemImage: "arrow.up.arrow.down")
-                }
-                .help("Sorted by \(m.sortField.rawValue)")
-
-                Button { m.connect(silent: false) } label: { Label("Refresh", systemImage: "arrow.clockwise") }
-                    .disabled(m.isExporting)
-                    .help("Reload the photo library from the device")
-            }
-        }
         .background(
             Button("") { if let a = m.selectedAssets.first { m.previewAsset = a } }
                 .keyboardShortcut("y", modifiers: .command).opacity(0).frame(width: 0, height: 0)
@@ -388,25 +239,49 @@ struct AlbumView: View {
     private var header: some View {
         HStack(spacing: 14) {
             IconTile(symbol: m.currentAlbum?.icon ?? "photo", color: Theme.color(for: m.currentAlbum?.id ?? ""), size: 46)
-                .shadow(color: Theme.color(for: m.currentAlbum?.id ?? "").opacity(0.4), radius: 10, y: 4)
+                .shadow(color: Theme.color(for: m.currentAlbum?.id ?? "").opacity(0.45), radius: 12, y: 4)
             VStack(alignment: .leading, spacing: 2) {
-                Text(m.currentAlbum?.title ?? "Photos").font(.system(size: 24, weight: .bold, design: .rounded))
-                Text("\(Fmt.count(m.visibleAssets.count)) items · \(Fmt.bytes(m.visibleBytes))")
-                    .font(.callout).foregroundStyle(.secondary).monospacedDigit()
+                Text(m.currentAlbum?.title ?? "Photos").font(.system(size: 24, weight: .bold, design: .rounded)).foregroundStyle(Theme.text)
+                Text("\(Fmt.count(m.visibleAssets.count)) item\(m.visibleAssets.count == 1 ? "" : "s") · \(Fmt.bytes(m.visibleBytes))\(m.visibleVideoCount > 0 ? " · \(Fmt.count(m.visibleVideoCount)) video\(m.visibleVideoCount == 1 ? "" : "s")" : "")")
+                    .font(.callout).foregroundStyle(Theme.secondary).monospacedDigit()
                     .contentTransition(.numericText())
             }
             Spacer()
-            let videos = m.visibleVideoCount
             if m.isFiltering { ProgressView().controlSize(.small) }
-            if !m.visibleAssets.isEmpty {
-                Pill(symbol: "photo", text: Fmt.count(m.visibleAssets.count - videos))
-                if videos > 0 { Pill(symbol: "video", text: Fmt.count(videos)) }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(Theme.faint)
+                TextField("Search name, folder or date", text: $m.searchText).textFieldStyle(.plain)
+                if !m.searchText.isEmpty {
+                    Button { m.searchText = "" } label: { Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.faint) }.buttonStyle(.plain)
+                }
             }
+            .font(.system(size: 13))
+            .padding(.horizontal, 11).padding(.vertical, 6)
+            .frame(width: 230)
+            .glassSurface(Capsule(), fallback: Theme.raised)
+            Picker("View", selection: $gridMode) {
+                Image(systemName: "square.grid.2x2").tag(true)
+                Image(systemName: "list.bullet").tag(false)
+            }
+            .pickerStyle(.segmented).labelsHidden().frame(width: 76)
+            .help("Thumbnails or a detailed list")
+            Menu {
+                Picker("Sort by", selection: Binding(get: { m.sortField }, set: { m.setSort($0, ascending: m.sortAscending) })) {
+                    ForEach(SortField.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.inline)
+                Picker("Order", selection: Binding(get: { m.sortAscending }, set: { m.setSort(m.sortField, ascending: $0) })) {
+                    Text(ascendingLabel).tag(true)
+                    Text(descendingLabel).tag(false)
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Image(systemName: "arrow.up.arrow.down").foregroundStyle(Theme.secondary)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .help("Sorted by \(m.sortField.rawValue)")
         }
         .padding(.horizontal, 16).padding(.top, 14).padding(.bottom, 6)
-        .id(m.selection)
-        .transition(.opacity.combined(with: .offset(y: 6)))
-        .animation(.easeOut(duration: 0.25), value: m.selection)
     }
 
     private var ascendingLabel: String {
@@ -436,18 +311,33 @@ struct AlbumView: View {
                             Label(f.rawValue, systemImage: f.icon)
                                 .font(.system(size: 12, weight: on ? .semibold : .regular))
                                 .padding(.horizontal, 11).padding(.vertical, 5)
-                                .foregroundStyle(on ? Color.white : Color.primary)
+                                .foregroundStyle(on ? Color.white : Theme.secondary)
                                 .background {
-                                    ZStack {
-                                        Capsule().fill(Color.primary.opacity(0.07))
-                                        if on { Capsule().fill(Theme.gradient).matchedGeometryEffect(id: "chip", in: chipSpace) }
+                                    if liquidGlass {
+                                        Capsule().fill(on ? Theme.accent.opacity(0.9) : Color.white.opacity(0.0001))
+                                    } else {
+                                        ZStack {
+                                            Capsule().fill(Theme.raised.opacity(0.7))
+                                            if on { Capsule().fill(Theme.gradient).matchedGeometryEffect(id: "chip", in: chipSpace) }
+                                        }
                                     }
                                 }
                         }
                         .buttonStyle(.plain)
                     }
+                    if m.minBytes > 0 {
+                        Button { m.minBytes = 0 } label: {
+                            Label("Over \(Fmt.bytes(m.minBytes))", systemImage: "xmark")
+                                .font(.system(size: 12, weight: .semibold)).foregroundStyle(.white)
+                                .padding(.horizontal, 11).padding(.vertical, 5)
+                                .background(Capsule().fill(Theme.color(for: "smart_videos")))
+                        }
+                        .buttonStyle(.plain).help("Remove the size filter")
+                    }
                 }
             }
+            .padding(liquidGlass ? 4 : 0)
+            .glassSurface(Capsule(), fallback: .clear, stroke: .clear)
             Spacer(minLength: 8)
             Button {
                 m.setSort(m.sortField, ascending: !m.sortAscending)
@@ -457,7 +347,7 @@ struct AlbumView: View {
                         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: m.sortAscending)
                     Text("\(m.sortField.rawValue): \(m.sortAscending ? ascendingLabel : descendingLabel)")
                 }
-                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .font(.system(size: 12)).foregroundStyle(Theme.secondary)
             }
             .buttonStyle(.plain)
             .help("Click to reverse the order")
@@ -466,24 +356,54 @@ struct AlbumView: View {
                     .transition(.opacity.combined(with: .move(edge: .trailing)))
             }
         }
-        .padding(.horizontal, 16).padding(.vertical, 9)
+        .padding(.horizontal, 16).padding(.vertical, 6)
         .animation(.easeInOut(duration: 0.2), value: gridMode)
         .animation(.spring(response: 0.32, dampingFraction: 0.8), value: m.mediaFilter)
     }
 
     private var emptyState: some View {
-        let unfiltered = m.searchText.isEmpty && m.mediaFilter == .all
+        let unfiltered = m.searchText.isEmpty && m.mediaFilter == .all && m.dateRange == nil && m.minBytes == 0
         return VStack(spacing: 10) {
             Spacer()
             Image(systemName: unfiltered ? "photo.on.rectangle.angled" : "magnifyingglass")
-                .font(.system(size: 44)).foregroundStyle(.tertiary)
-            Text(unfiltered ? "This album is empty" : "No matching items").font(.title3.weight(.semibold))
+                .font(.system(size: 44)).foregroundStyle(Theme.faint)
+            Text(unfiltered ? "This group is empty" : "Nothing matches").font(.title3.weight(.semibold)).foregroundStyle(Theme.text)
             if !unfiltered {
-                Button("Clear Filters") { m.searchText = ""; m.mediaFilter = .all }.buttonStyle(SoftButtonStyle())
+                Button("Clear Filters") { m.searchText = ""; m.mediaFilter = .all; m.dateRange = nil; m.minBytes = 0 }.buttonStyle(SoftButtonStyle())
             }
             Spacer()
         }
         .frame(maxWidth: .infinity)
+    }
+}
+
+/// Where the next copy goes; picked here or by asking ("… to T7").
+struct DestinationPicker: View {
+    @ObservedObject var m: DeviceManager
+    var body: some View {
+        let list = Destinations.list(m).filter { !$0.readOnly }
+        let name = m.pendingDestination.map { u in list.first { $0.url == u }?.name ?? u.lastPathComponent }
+        Menu {
+            ForEach(list) { d in
+                Button { m.pendingDestination = d.url } label: {
+                    if d.url == m.pendingDestination { Label(d.name, systemImage: "checkmark") } else { Text(d.name) }
+                }
+            }
+            Divider()
+            Button("Choose another folder…") {
+                if let u = Destinations.choose(m) { m.rememberDestination(u); m.pendingDestination = u }
+            }
+            if m.pendingDestination != nil { Button("Ask each time") { m.pendingDestination = nil } }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "arrow.right.circle.fill").foregroundStyle(Theme.accentLight)
+                Text(name.map { "To \($0)" } ?? "Choose where").foregroundStyle(Theme.text)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.faint)
+            }
+            .font(.system(size: 12, weight: .semibold))
+        }
+        .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+        .help("Where the copies go")
     }
 }
 
@@ -501,10 +421,9 @@ struct ActionBar: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
-            .shadow(color: .black.opacity(0.22), radius: 18, y: 6))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.09)))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Theme.bgDeep.opacity(liquidGlass ? 0.6 : 0)))
+        .glassSurface(RoundedRectangle(cornerRadius: 26, style: .continuous), fallback: Theme.surface.opacity(0.97))
+        .shadow(color: .black.opacity(liquidGlass ? 0 : 0.4), radius: 18, y: 6)
         .padding(.horizontal, 14).padding(.bottom, 12).padding(.top, 6)
         .animation(.spring(response: 0.45, dampingFraction: 0.85), value: m.isExporting)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: m.selectedIDs.isEmpty)
@@ -514,7 +433,7 @@ struct ActionBar: View {
         HStack(spacing: 10) {
             if m.selectedIDs.isEmpty {
                 Image(systemName: "hand.tap").foregroundStyle(.secondary)
-                Text("Select items to export just those, or export everything shown.")
+                Text("Select items to copy just those, or copy everything shown.")
                     .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
@@ -523,22 +442,23 @@ struct ActionBar: View {
                 Button("Deselect") { m.selectedIDs.removeAll() }.buttonStyle(.link)
             }
             Spacer()
+            DestinationPicker(m: m)
             if !m.visibleAssets.isEmpty && m.selectedIDs.count < m.visibleAssets.count {
                 Button("Select All") { m.selectedIDs = Set(m.visibleAssets.map(\.id)) }
                     .buttonStyle(.link).keyboardShortcut("a", modifiers: [.command, .shift])
             }
             if m.selectedIDs.isEmpty {
                 Button { m.requestExport(selectedOnly: false) } label: {
-                    Label("Export All \(Fmt.count(m.visibleAssets.count))…", systemImage: "square.and.arrow.down")
+                    Label("Copy All \(Fmt.count(m.visibleAssets.count))…", systemImage: "arrow.right.circle.fill")
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(m.visibleAssets.isEmpty)
                 .keyboardShortcut("e", modifiers: .command)
             } else {
-                Button("Export All \(Fmt.count(m.visibleAssets.count))…") { m.requestExport(selectedOnly: false) }
+                Button("Copy All \(Fmt.count(m.visibleAssets.count))…") { m.requestExport(selectedOnly: false) }
                     .buttonStyle(SoftButtonStyle())
                 Button { m.requestExport(selectedOnly: true) } label: {
-                    Label("Export \(Fmt.count(m.selectedIDs.count)) Selected…", systemImage: "square.and.arrow.down")
+                    Label("Copy \(Fmt.count(m.selectedIDs.count)) Selected…", systemImage: "arrow.right.circle.fill")
                 }
                 .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut("e", modifiers: .command)
@@ -719,6 +639,7 @@ struct ExportSheet: View {
         }
         .padding(24)
         .frame(width: 560)
+        .background(Theme.bg)
         .onChange(of: destination) { d in
             freeBytes = d.flatMap(VolumeInfo.freeSpace)
             destinationFormat = d.map(VolumeInfo.format) ?? ""
@@ -731,7 +652,9 @@ struct ExportSheet: View {
                 if a.fileSize > 4_294_967_295 { hugeCount += 1 }
             }
             volumes = VolumeInfo.external()
-            if let last = UserDefaults.standard.string(forKey: "lastDestination"),
+            if let preset = request.destination ?? m.pendingDestination {
+                destination = preset
+            } else if let last = UserDefaults.standard.string(forKey: "lastDestination"),
                FileManager.default.fileExists(atPath: last) {
                 destination = URL(fileURLWithPath: last)
             }
@@ -885,6 +808,7 @@ struct SummarySheet: View {
         }
         .padding(26)
         .frame(width: 500)
+        .background(Theme.bg)
         .onAppear { shown = true }
     }
 
@@ -899,5 +823,105 @@ struct SummarySheet: View {
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.05)))
         .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 10)
         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15 + 0.07 * Double(order)), value: shown)
+    }
+}
+
+/// Offers to download Google's Android tool, which may not be shipped inside the app.
+struct AndroidSetupRow: View {
+    @ObservedObject var m: DeviceManager
+    var body: some View {
+        HStack(spacing: 12) {
+            Button { m.setUpAndroid() } label: {
+                Label(m.androidSettingUp ? "Downloading…" : "Set Up Android Support", systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(SoftButtonStyle()).disabled(m.androidSettingUp)
+            Text(m.androidSetupMessage.isEmpty ? "Android needs Google's free connection tool (about 15 MB, downloaded from Google)." : m.androidSetupMessage)
+                .font(.callout).foregroundStyle(.secondary).frame(maxWidth: 420, alignment: .leading)
+        }
+    }
+}
+
+
+// MARK: - Loading
+
+/// The screen while a library is read: the phone and the Mac with photos hopping between them, and the steps so far.
+struct LinkLoader: View {
+    let device: String
+    let symbol: String
+    let organising: Bool
+
+    var body: some View {
+        VStack(spacing: 28) {
+            HStack(spacing: 0) {
+                IconTile(symbol: symbol, color: Theme.accent, size: 76)
+                HopLane().frame(width: 230, height: 90)
+                IconTile(symbol: "laptopcomputer", color: Color(nsColor: .systemIndigo), size: 76)
+            }
+            VStack(spacing: 6) {
+                Text(organising ? "Almost there" : "Reading \(device)")
+                    .font(.system(size: 28, weight: .bold, design: .rounded))
+                    .contentTransition(.opacity)
+                Text("Large libraries can take a minute. Keep \(device) unlocked — nothing on it is changed.")
+                    .font(.callout).foregroundStyle(Theme.secondary).multilineTextAlignment(.center)
+            }
+            VStack(alignment: .leading, spacing: 14) {
+                row(.done, "Connected over USB")
+                row(organising ? .done : .active, "Reading the photo library")
+                row(organising ? .active : .waiting, "Sorting it into albums")
+            }
+            .padding(.horizontal, 22).padding(.vertical, 18)
+            .frame(width: 340, alignment: .leading)
+            .contentSurface(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        }
+        .animation(.spring(response: 0.5, dampingFraction: 0.85), value: organising)
+    }
+
+    private enum StepState { case done, active, waiting }
+
+    private func row(_ state: StepState, _ text: String) -> some View {
+        HStack(spacing: 12) {
+            ZStack {
+                switch state {
+                case .done: Image(systemName: "checkmark.circle.fill").font(.system(size: 18)).foregroundStyle(Theme.success)
+                case .active: ProgressView().controlSize(.small)
+                case .waiting: Circle().strokeBorder(Theme.faint, style: StrokeStyle(lineWidth: 1.5, dash: [3, 3])).frame(width: 17, height: 17)
+                }
+            }
+            .frame(width: 20)
+            Text(text).font(.system(size: 14, weight: state == .active ? .semibold : .regular))
+                .foregroundStyle(state == .waiting ? Theme.faint : Theme.text)
+        }
+    }
+}
+
+/// Little photos hopping along an arc from the phone to the Mac, over and over.
+private struct HopLane: View {
+    var body: some View {
+        TimelineView(.animation) { tl in
+            Canvas { ctx, size in
+                let w = size.width, base = size.height * 0.62, lift = size.height * 0.5
+                var dots = Path()
+                for i in stride(from: 0.0, through: 1.0, by: 0.05) {
+                    let x = 14 + (w - 28) * i, y = base - lift * sin(.pi * i)
+                    dots.addEllipse(in: CGRect(x: x - 1.5, y: y - 1.5, width: 3, height: 3))
+                }
+                ctx.fill(dots, with: .color(Theme.faint))
+                let t = tl.date.timeIntervalSinceReferenceDate
+                let colours: [Color] = [Color(nsColor: .systemPink), Color(nsColor: .systemOrange), Color(nsColor: .systemTeal)]
+                for k in 0..<3 {
+                    let p = (t / 1.8 + Double(k) / 3).truncatingRemainder(dividingBy: 1)
+                    let x = 14 + (w - 28) * p, y = base - lift * sin(.pi * p)
+                    let fade = min(1, min(p, 1 - p) * 6)
+                    var card = ctx
+                    card.opacity = fade
+                    card.translateBy(x: x, y: y)
+                    card.rotate(by: .degrees((p - 0.5) * 40))
+                    let r = CGRect(x: -11, y: -9, width: 22, height: 18)
+                    card.fill(Path(roundedRect: r, cornerRadius: 4), with: .linearGradient(Gradient(colors: [colours[k].opacity(0.95), colours[k].opacity(0.65)]),
+                                                                                       startPoint: CGPoint(x: 0, y: -9), endPoint: CGPoint(x: 0, y: 9)))
+                    card.stroke(Path(roundedRect: r, cornerRadius: 4), with: .color(.white.opacity(0.85)), lineWidth: 1.5)
+                }
+            }
+        }
     }
 }

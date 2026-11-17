@@ -49,7 +49,7 @@ final class DeviceManager: ObservableObject {
     // Export
     @Published var options = ExportOptions()
     @Published var exportRequest: ExportRequest?
-    @Published var isExporting = false
+    @Published var isExporting = false { didSet { updateAwake() } }
     @Published var isStopping = false
     @Published var progress = ExportProgress()
     @Published var summary: ExportSummary?
@@ -63,7 +63,7 @@ final class DeviceManager: ObservableObject {
     @Published private(set) var afcGeneration = 0
     @Published var afcSelection: Set<String> = []
     @Published var afcLoading = false
-    @Published var afcBusy = false
+    @Published var afcBusy = false { didSet { updateAwake() } }
     @Published var afcMessage = ""
     @Published var afcMessageIsError = false
     private var transferJob: ExportJob?
@@ -71,13 +71,13 @@ final class DeviceManager: ObservableObject {
 
     // Backups
     @Published var backupFolder: URL = {
-        if let test = ProcessInfo.processInfo.environment["IPHONE_BACKUP_DIR"] { return URL(fileURLWithPath: test) }
+        if uiTestBuild, let test = ProcessInfo.processInfo.environment["IPHONE_BACKUP_DIR"] { return URL(fileURLWithPath: test) }
         if let saved = UserDefaults.standard.string(forKey: "backupFolder")
             ?? UserDefaults(suiteName: "com.local.iPhoneAlbumExtractor.v2")?.string(forKey: "backupFolder") { return URL(fileURLWithPath: saved) }
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("iPhone Backups")
     }() { didSet { UserDefaults.standard.set(backupFolder.path, forKey: "backupFolder"); refreshBackups() } }
     @Published private(set) var backups: [BackupEntry] = []
-    @Published private(set) var backupRunning = false
+    @Published private(set) var backupRunning = false { didSet { updateAwake() } }
     @Published private(set) var backupStopping = false
     @Published private(set) var backupPercent: Double? = nil
     @Published private(set) var backupPhase = ""
@@ -98,7 +98,7 @@ final class DeviceManager: ObservableObject {
     @Published var dataMessage = ""
     var dataReader: BackupReader?
     /// Kept in memory for this run only; never saved.
-    var dataPassword: String? = ProcessInfo.processInfo.environment["IPHONE_BACKUP_PASSWORD"]
+    var dataPassword: String? = uiTestBuild ? ProcessInfo.processInfo.environment["IPHONE_BACKUP_PASSWORD"] : nil
     @Published var dataNeedsPassword = false
     @Published var dataPasswordWrong = false
     @Published var dataUnlocking = false
@@ -111,6 +111,7 @@ final class DeviceManager: ObservableObject {
         let id = UUID()
         let assets: [PhotoAsset]
         let title: String
+        var destination: URL? = nil
     }
 
     var isReady: Bool { phase == .ready }
@@ -154,7 +155,7 @@ final class DeviceManager: ObservableObject {
         else if selection == "nav_files" { openBrowser(app: nil) }
         else if let s = selection, s.hasPrefix("bk:"), let kind = BackupKind(rawValue: String(s.dropFirst(3))) { openData(kind) }
         else if let s = selection, s.hasPrefix("app:") { openBrowser(app: String(s.dropFirst(4))) }
-        else { refilter() }
+        else { resetLensFilters(); refilter() }
     }
 
     private func updateSelectedBytes() {
@@ -169,12 +170,14 @@ final class DeviceManager: ObservableObject {
         let token = filterToken
         guard let album = currentAlbum else { apply([], token: token); return }
         let source = album.assets
-        let filter = mediaFilter, field = sortField, asc = sortAscending
+        let filter = mediaFilter, field = sortField, asc = sortAscending, range = dateRange, minB = minBytes
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let compute: @Sendable () -> [PhotoAsset] = {
             var list = source
             if filter != .all { list = list.filter(filter.matches) }
             if !q.isEmpty { list = list.filter { $0.searchKey.contains(q) } }
+            if let range { list = list.filter { $0.dateCreated.map(range.contains) ?? false } }
+            if minB > 0 { list = list.filter { $0.fileSize >= minB } }
             return SortField.sorted(list, by: field, ascending: asc)
         }
         if source.count < 3000 && !debounce {
@@ -299,7 +302,7 @@ final class DeviceManager: ObservableObject {
                     self.smartAlbums = []; self.userAlbums = []; self.catalogWarnings = []; self.apps = []
                     self.selectedIDs.removeAll()
                     self.refilter()
-                    self.phase = .ready
+                    self.restartingSince = nil; self.phase = .ready
                     if !["nav_home", "nav_device"].contains(self.selection ?? "") { self.selection = "nav_home" }
                     self.runLaunchAction()
                 }
@@ -350,7 +353,7 @@ final class DeviceManager: ObservableObject {
                     self.selectedIDs.removeAll()
                     if self.selection == nil || ((self.selection ?? "").hasPrefix("album_") && self.currentAlbum == nil) { self.selection = "nav_home" }
                     self.refilter()
-                    self.phase = .ready
+                    self.restartingSince = nil; self.phase = .ready
                     self.loadApps(device: device, tools: tools)
                     self.runLaunchAction()
                 case .failure(.unreadable):
@@ -378,30 +381,97 @@ final class DeviceManager: ObservableObject {
 
     /// Developer aid for checking the interface without clicking: IPHONE_UI_TEST=sheet | preview | export:<folder> | select:<id>
     private func runLaunchAction() {
-        guard let action = ProcessInfo.processInfo.environment["IPHONE_UI_TEST"], !didRunLaunchAction else { return }
+        guard uiTestBuild, let action = ProcessInfo.processInfo.environment["IPHONE_UI_TEST"], !didRunLaunchAction else { return }
         didRunLaunchAction = true
         if action == "sheet" { requestExport(selectedOnly: false) }
         else if action == "preview" { previewAsset = visibleAssets.first }
         else if action.hasPrefix("export:") { startExport(visibleAssets, to: URL(fileURLWithPath: String(action.dropFirst(7)))) }
         else if action.hasPrefix("folder:") { openFolder(String(action.dropFirst(7))) }
+        else if action.hasPrefix("power:") { power(String(action.dropFirst(6))) }
+        else if action.hasPrefix("hop:") {
+            let parts = action.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let album = (smartAlbums + userAlbums).first(where: { $0.id == parts[0] }) {
+                startExport(album.assets, to: URL(fileURLWithPath: parts[1]))
+            }
+        }
         else if action.hasPrefix("select:") { selection = String(action.dropFirst(7)) }
         else if action.hasPrefix("backup:") { backupFolder = URL(fileURLWithPath: String(action.dropFirst(7))); selection = "nav_backup"; startBackup() }
     }
     private var didRunLaunchAction = false
+
+    // MARK: Shores
+
+    @Published var dateRange: ClosedRange<Date>? { didSet { if oldValue != dateRange { refilter() } } }
+    @Published var minBytes: Int64 = 0 { didSet { if oldValue != minBytes { refilter() } } }
+    /// Where the next copy goes when the user picked a place first (on Shores, in a group, or by asking).
+    @Published var pendingDestination: URL?
+    /// Where the running copy is going, so its card on Shores can show it receiving.
+    @Published private(set) var exportDestination: URL?
+    @Published private(set) var volumes: [VolumeInfo] = VolumeInfo.external()
+    @Published private(set) var recentDestinations: [String] = UserDefaults.standard.stringArray(forKey: "recentDestinations") ?? []
+    @Published private(set) var lastHop = UserDefaults.standard.string(forKey: "lastHop") ?? ""
+    private var pendingUploads: [URL] = []
+
+    func refreshVolumes() { volumes = VolumeInfo.external() }
+
+    func rememberDestination(_ url: URL) {
+        var list = recentDestinations.filter { $0 != url.path }
+        list.insert(url.path, at: 0)
+        recentDestinations = Array(list.prefix(6))
+        UserDefaults.standard.set(recentDestinations, forKey: "recentDestinations")
+    }
+
+    private func resetLensFilters() {
+        if !searchText.isEmpty { searchText = "" }
+        if mediaFilter != .all { mediaFilter = .all }
+        if dateRange != nil { dateRange = nil }
+        if minBytes != 0 { minBytes = 0 }
+    }
+
+    /// A whole group dropped on a destination: confirm with the usual copy sheet, destination already chosen.
+    func requestHop(_ album: AlbumCategory, to destination: URL) {
+        guard !album.assets.isEmpty, !isExporting else { return }
+        let n = album.assets.count
+        exportRequest = ExportRequest(assets: album.assets, title: "Copy \(Fmt.count(n)) item\(n == 1 ? "" : "s") from \(album.title)", destination: destination)
+    }
+
+    /// Android storage folders dropped on a destination are copied whole.
+    func copyFolders(_ paths: [String], to folder: URL) {
+        rememberDestination(folder)
+        download(paths.map { AFCFileEntry(name: ($0 as NSString).lastPathComponent, path: $0, isDirectory: true, size: 0, modifiedDate: "") },
+                 app: nil, to: folder)
+    }
+
+    /// Files dropped from Finder onto the device: opens the app's folder (or Android's Download folder) and adds them there.
+    func sendFiles(_ urls: [URL], toApp app: String?) {
+        guard !urls.isEmpty, !afcBusy else { return }
+        pendingUploads = urls
+        if isAndroid { openFolder(Android.storageRoot + "/Download") }
+        else if let app { if selection == "app:\(app)" { selectionChanged() } else { selection = "app:\(app)" } }
+    }
+
+    private func runPendingUploads() {
+        guard !pendingUploads.isEmpty else { return }
+        let urls = pendingUploads
+        pendingUploads = []
+        upload(urls)
+    }
 
     // MARK: Export
 
     func requestExport(selectedOnly: Bool) {
         let items = selectedOnly ? selectedAssets : visibleAssets
         guard !items.isEmpty else { return }
-        let title = selectedOnly ? "Export \(Fmt.count(items.count)) selected item\(items.count == 1 ? "" : "s")"
-                                 : "Export \(Fmt.count(items.count)) item\(items.count == 1 ? "" : "s") from \(currentAlbum?.title ?? "album")"
-        exportRequest = ExportRequest(assets: items, title: title)
+        let title = selectedOnly ? "Copy \(Fmt.count(items.count)) selected item\(items.count == 1 ? "" : "s")"
+                                 : "Copy \(Fmt.count(items.count)) item\(items.count == 1 ? "" : "s") from \(currentAlbum?.title ?? "album")"
+        exportRequest = ExportRequest(assets: items, title: title, destination: pendingDestination)
     }
 
     func startExport(_ assets: [PhotoAsset], to destination: URL) {
         guard let device, let tools, !assets.isEmpty, !isExporting else { return }
         UserDefaults.standard.set(destination.path, forKey: "lastDestination")
+        rememberDestination(destination)
+        exportDestination = destination
         let job = ExportJob()
         self.job = job
         isExporting = true
@@ -423,6 +493,14 @@ final class DeviceManager: ObservableObject {
                 self.isStopping = false
                 self.job = nil
                 self.summary = result
+                self.exportDestination = nil
+                if result.copied > 0 {
+                    let f = DateFormatter()
+                    f.dateStyle = .medium
+                    f.timeStyle = .short
+                    self.lastHop = "\(Fmt.count(result.copied)) item\(result.copied == 1 ? "" : "s") to \(destination.lastPathComponent) · \(f.string(from: Date()))"
+                    UserDefaults.standard.set(self.lastHop, forKey: "lastHop")
+                }
                 if result.isClean { NSSound(named: "Glass")?.play() }
             }
         }
@@ -448,7 +526,41 @@ final class DeviceManager: ObservableObject {
         ThumbnailLoader.purgeDiskCache()
     }
 
+    // MARK: Android setup
+
+    @Published var androidSetupMessage = ""
+    @Published var androidSettingUp = false
+
+    /// Downloads Google's Android tool on request (it may not be shipped inside other apps).
+    func setUpAndroid() {
+        guard !androidSettingUp else { return }
+        androidSettingUp = true
+        androidSetupMessage = "Downloading from Google…"
+        Task {
+            let problem = await Android.setUp()
+            androidSettingUp = false
+            androidSetupMessage = problem ?? "Android support is ready. Turn on USB debugging on the phone and plug it in."
+            if problem == nil { tools = Tools.locate(); connect(silent: true) }
+        }
+    }
+
     // MARK: Power
+
+    /// Set when the device was told to restart, so the app says so instead of asking to connect a device.
+    @Published var restartingSince: Date?
+    var isRestarting: Bool { restartingSince.map { Date().timeIntervalSince($0) < 600 } ?? false }
+
+    private var awakeToken: NSObjectProtocol?
+    /// Keeps the Mac from sleeping while a copy, backup or restore runs.
+    private func updateAwake() {
+        let busy = isExporting || afcBusy || backupRunning
+        if busy, awakeToken == nil {
+            awakeToken = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Copying between this Mac and a device")
+        } else if !busy, let token = awakeToken {
+            ProcessInfo.processInfo.endActivity(token)
+            awakeToken = nil
+        }
+    }
 
     @Published var powerMessage = ""
 
@@ -459,6 +571,7 @@ final class DeviceManager: ObservableObject {
         Task.detached {
             let ok = device.isAndroid ? Android.power(action, device: device, tools: tools) : AFC.power(action, device: device, tools: tools)
             await MainActor.run {
+                if ok && action == "restart" { self.restartingSince = Date() }
                 self.powerMessage = ok ? (action == "restart" ? "The \(kind) is restarting. It will reappear here when it is back." : "The \(kind) is asleep.")
                                        : "The \(kind) did not accept the request. Unlock it and try again."
             }
@@ -543,6 +656,7 @@ final class DeviceManager: ObservableObject {
                 self.backupStopping = false
                 self.backupJob = nil
                 self.backupFailed = problem != nil
+                if problem == nil { self.restartingSince = Date() }
                 self.backupMessage = problem ?? "Restore complete. The \(kind) is restarting and will reappear here when it is back."
                 if problem == nil { NSSound(named: "Glass")?.play() }
             }
@@ -584,6 +698,7 @@ final class DeviceManager: ObservableObject {
                 self.afcEntries = finalEntries
                 self.afcGeneration += 1
                 self.afcLoading = false
+                self.runPendingUploads()
             }
         }
     }
@@ -604,6 +719,7 @@ final class DeviceManager: ObservableObject {
                 self.afcSelection.removeAll()
                 self.afcLoading = false
                 if !keepMessage { self.afcMessage = "" }
+                self.runPendingUploads()
             }
         }
     }
@@ -620,9 +736,13 @@ final class DeviceManager: ObservableObject {
 
     /// Device → Mac for the selected files and folders.
     func downloadAFCSelection(to folder: URL) {
-        let chosen = afcEntries.filter { afcSelection.contains($0.path) }
+        download(afcEntries.filter { afcSelection.contains($0.path) }, app: afcApp, to: folder)
+    }
+
+    /// Device → Mac for files and folders, never overwriting. Used by the file browser and by Android folder hops.
+    func download(_ chosen: [AFCFileEntry], app: String?, to folder: URL) {
         guard let device, let tools, !chosen.isEmpty, !afcBusy else { return }
-        let app = afcApp
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let job = ExportJob()
         transferJob = job
         afcBusy = true

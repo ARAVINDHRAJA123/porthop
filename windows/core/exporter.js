@@ -77,10 +77,14 @@ async function exportAssets({ assets, dest, options = {}, device, tools, job, on
     }
   }
 
+  // Files in the batches being copied right now; the ones already complete count as landed in the progress.
+  const active = new Set();
   const emit = () => {
     const inFlight = dirSize(staging);
+    let landed = 0;
+    for (const it of active) if (it.size > 0 && fileSize(it.staged) === it.size) landed++;
     const secs = (Date.now() - started) / 1000;
-    onProgress({ total: summary.total, copied: summary.copied, skipped: summary.skipped, failed: summary.failures.length,
+    onProgress({ total: summary.total, copied: summary.copied, skipped: summary.skipped, failed: summary.failures.length, inFlight: landed,
       bytesDone: bytesDone + inFlight, bytesTotal, bytesPerSecond: secs > 0.5 ? (bytesDone + inFlight) / secs : 0 });
   };
 
@@ -112,10 +116,11 @@ async function exportAssets({ assets, dest, options = {}, device, tools, job, on
       const r = ios.quote(item.remote), l = ios.quote(item.staged);
       if (r && l) cmds += `get ${r} ${l}\n`;
       item.state = 'tried';
+      if (!item.live) active.add(item);
     }
     await run(tools.afc, ios.base(device), { stdin: cmds + 'quit\n', onStart: (c) => job.track(c) });
     const interrupted = job.cancelled || summary.stalled;
-    for (const item of batch) await settle(item, interrupted);
+    for (const item of batch) { await settle(item, interrupted); active.delete(item); }
   };
 
   let lastSeen = -1, lastChange = Date.now();

@@ -52,9 +52,9 @@ function supportDir() {
   return path.join(base, 'PhoneAlbumExtractor');
 }
 
-function locateTools(resourcesDir) {
+function locateTools(resourcesDir, allowOverride = true) {
   const dirs = [];
-  if (process.env.PHONE_TOOLS_DIR) dirs.push(process.env.PHONE_TOOLS_DIR);
+  if (allowOverride && process.env.PHONE_TOOLS_DIR) dirs.push(process.env.PHONE_TOOLS_DIR);
   if (resourcesDir) dirs.push(path.join(resourcesDir, 'tools'));
   dirs.push(path.join(__dirname, '..', 'tools'));
   dirs.push(path.join(supportDir(), 'platform-tools'));

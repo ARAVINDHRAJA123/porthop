@@ -12,7 +12,7 @@ extension BackupKind {
         case .messages: return .green
         case .whatsapp: return .mint
         case .contacts: return .gray
-        case .notes: return .yellow
+        case .notes: return Color(red: 0.95, green: 0.66, blue: 0.08)   // amber: white stays readable on it
         case .calendar: return .red
         case .calls: return .teal
         case .safari: return .blue
@@ -292,8 +292,9 @@ struct BackupDataView: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial).shadow(color: .black.opacity(0.22), radius: 18, y: 6))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.09)))
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Theme.bgDeep.opacity(liquidGlass ? 0.6 : 0)))
+        .glassSurface(RoundedRectangle(cornerRadius: 26, style: .continuous), fallback: Theme.surface.opacity(0.97))
+        .shadow(color: .black.opacity(liquidGlass ? 0 : 0.4), radius: 18, y: 6)
         .padding(.horizontal, 14).padding(.bottom, 12).padding(.top, 6)
     }
 

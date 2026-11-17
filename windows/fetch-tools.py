@@ -133,8 +133,24 @@ sdk = os.path.join(stage, "sdk")
 ZIG = ["zig", "cc", "-target", "x86_64-windows-gnu", "-O2", "-w", "-DHAVE_CONFIG_H", "-DLIBIMOBILEDEVICE_STATIC", "-D_WIN32_WINNT=0x0601",
        "-I" + src, "-I" + os.path.join(src, "include"), "-I" + os.path.join(sdk, "include")]
 def compile_or_stop(cmd, what):
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, cwd=stage)
     if r.returncode != 0: sys.exit("could not build " + what + "\n" + r.stderr[-3000:])
+
+# Every program runs with UTF-8 as its text encoding, so folder names and backup passwords with accents
+# or non-Latin letters reach the tools intact (Windows 10 version 1903 and later).
+UTF8_MANIFEST = os.path.join(stage, "utf8.manifest")
+with open(UTF8_MANIFEST, "w") as f:
+    f.write("""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <activeCodePage xmlns="http://schemas.microsoft.com/SMI/2019/WindowsSettings">UTF-8</activeCodePage>
+    </windowsSettings>
+  </application>
+</assembly>
+""")
+UTF8_RC = os.path.join(stage, "utf8.rc")
+with open(UTF8_RC, "w") as f: f.write('1 24 "utf8.manifest"\n')  # read relative to the stage folder
 
 objs = []
 for c in sorted(glob.glob(os.path.join(src, "src", "*.c")) + glob.glob(os.path.join(src, "common", "*.c"))):
@@ -146,9 +162,9 @@ compile_or_stop(["zig", "ar", "rcs", lib] + objs, "the library archive")
 LINK = [lib] + [os.path.join(sdk, "lib", n) for n in ("libimobiledevice-glue-1.0.dll.a", "libusbmuxd-2.0.dll.a", "libplist-2.0.dll.a", "libssl.dll.a", "libcrypto.dll.a")] \
     + ["-lws2_32", "-liphlpapi", "-lole32", "-lshell32", "-lcrypt32", "-ladvapi32", "-luser32"]
 for exe in OFFICIAL:
-    compile_or_stop(ZIG + [os.path.join(src, "tools", exe + ".c")] + LINK + ["-o", os.path.join(stage, exe + ".exe")], exe)
+    compile_or_stop(ZIG + [os.path.join(src, "tools", exe + ".c")] + LINK + [UTF8_RC, "-o", os.path.join(stage, exe + ".exe")], exe)
 for exe, helper in HELPERS.items():
-    compile_or_stop(ZIG + [os.path.join(HERE, "..", "Helpers", helper)] + LINK + ["-o", os.path.join(stage, exe + ".exe")], helper)
+    compile_or_stop(ZIG + [os.path.join(HERE, "..", "Helpers", helper)] + LINK + [UTF8_RC, "-o", os.path.join(stage, exe + ".exe")], helper)
 for name in ("COPYING", "COPYING.LESSER"):
     d = os.path.join(OUT, "licenses", "libimobiledevice")
     os.makedirs(d, exist_ok=True)
@@ -174,6 +190,19 @@ with open(os.path.join(OUT, "VERSIONS.txt"), "w") as out:
     out.write("The other libraries are Windows builds from the MSYS2 project (https://www.msys2.org), unmodified.\n")
     out.write("To rebuild everything: python3 fetch-tools.py (see the script for sources and checksums).\n\n")
     for n in sorted(versions): out.write(f"{n} {versions[n]}\n")
+# Where every bundled part's source code comes from; published with each release as PortHop-sources.zip.
+SHIPPED_MSYS2 = {"libplist": "LGPL-2.1", "libusbmuxd": "LGPL-2.1", "libimobiledevice-glue": "LGPL-2.1", "openssl": "Apache-2.0"}
+with open(os.path.join(OUT, "SOURCES.txt"), "w") as out:
+    out.write("PortHop for Windows bundles these open-source programs and libraries. Their source code is published with\n"
+              "every PortHop release as PortHop-sources.zip: https://github.com/ARAVINDHRAJA123/porthop/releases\n\n")
+    out.write("libimobiledevice 1.4.0: idevice_id, ideviceinfo, idevicepair, idevicebackup2 and idevicediagnostics\n"
+              "  (programs GPL-2.0-or-later, library LGPL-2.1), compiled by fetch-tools.py, linked into each program.\n"
+              f"  source: {SOURCE_URL}\n  SHA-256 {SOURCE_SHA256}\n")
+    out.write("afcclient.exe and applist.exe: PortHop's own helpers (MIT), source in Helpers/ of the PortHop repository.\n\n")
+    out.write("Windows builds from the MSYS2 project, used unmodified:\n")
+    for name, lic in SHIPPED_MSYS2.items():
+        ver = versions[PREFIX + name]
+        out.write(f"  {name} {ver} ({lic})\n  source: https://repo.msys2.org/mingw/sources/mingw-w64-{name}-{ver}.src.tar.zst\n")
 files = sorted(os.listdir(OUT))
 print("programs:", [p for p in PROGRAMS if p + ".exe" in files])
 print("not found:", [p for p in PROGRAMS if p + ".exe" not in files], "| unexpected missing libraries:", sorted(missing - system))

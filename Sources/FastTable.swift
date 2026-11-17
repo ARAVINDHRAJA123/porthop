@@ -48,7 +48,8 @@ struct FastTable<Row, ID: Hashable>: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let table = KeyTableView()
         table.style = .inset
-        table.usesAlternatingRowBackgroundColors = true
+        table.usesAlternatingRowBackgroundColors = false
+        table.backgroundColor = .clear
         table.allowsMultipleSelection = true
         table.allowsEmptySelection = true
         table.rowHeight = 26
@@ -432,9 +433,9 @@ struct FilesView: View {
             }
         }
         .padding(.horizontal, 16).padding(.vertical, 11)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(.regularMaterial)
-            .shadow(color: .black.opacity(0.22), radius: 18, y: 6))
-        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Color.primary.opacity(0.09)))
+        .background(RoundedRectangle(cornerRadius: 26, style: .continuous).fill(Theme.bgDeep.opacity(liquidGlass ? 0.6 : 0)))
+        .glassSurface(RoundedRectangle(cornerRadius: 26, style: .continuous), fallback: Theme.surface.opacity(0.97))
+        .shadow(color: .black.opacity(liquidGlass ? 0 : 0.22), radius: 18, y: 6)
         .padding(.horizontal, 14).padding(.bottom, 12).padding(.top, 6)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: m.afcBusy)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: m.afcSelection.isEmpty)

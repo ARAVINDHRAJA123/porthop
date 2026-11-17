@@ -2,8 +2,39 @@ import Foundation
 
 /// Android phones and tablets over USB, through Google's adb. The phone must have USB debugging switched on.
 enum Android {
-    /// adb is Google's program and may not be redistributed, so it lives outside the app bundle.
-    static let toolsDir = NSHomeDirectory() + "/Library/Application Support/iPhoneAlbumExtractor/android/platform-tools"
+    /// adb is Google's program and may not be redistributed, so it is downloaded from Google on request
+    /// and kept outside the app. The second folder is where earlier versions of the app kept it.
+    static let supportDir = NSHomeDirectory() + "/Library/Application Support/PortHop/android"
+    static let toolsDirs = [supportDir + "/platform-tools",
+                            NSHomeDirectory() + "/Library/Application Support/iPhoneAlbumExtractor/android/platform-tools"]
+
+    /// Downloads Google's platform-tools and checks adb is signed by Google. Returns nil on success, otherwise a reason.
+    static func setUp() async -> String? {
+        let url = URL(string: "https://dl.google.com/android/repository/platform-tools-latest-darwin.zip")!
+        let fm = FileManager.default
+        do {
+            let (file, response) = try await URLSession.shared.download(from: url)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return "Google's server answered with an error. Try again later." }
+            try fm.createDirectory(atPath: supportDir, withIntermediateDirectories: true)
+            let zip = URL(fileURLWithPath: supportDir).appendingPathComponent("platform-tools.zip")
+            try? fm.removeItem(at: zip)
+            try fm.moveItem(at: file, to: zip)
+            defer { try? fm.removeItem(at: zip) }
+            try? fm.removeItem(atPath: supportDir + "/platform-tools")
+            guard Shell.run("/usr/bin/ditto", ["-x", "-k", zip.path, supportDir], timeout: 180)?.ok == true else {
+                return "The download finished but could not be unpacked."
+            }
+            let adb = supportDir + "/platform-tools/adb"
+            let check = Shell.run("/usr/bin/codesign", ["--verify", "--strict", "-dv", "--verbose=2", adb], timeout: 30)
+            guard check?.ok == true, check?.output.contains("TeamIdentifier=EQHXZ8M8AV") == true else {
+                try? fm.removeItem(atPath: supportDir + "/platform-tools")
+                return "The download could not be confirmed as Google's own, so it was removed. Try again later."
+            }
+            return nil
+        } catch {
+            return "The download did not finish (\(error.localizedDescription)). Check the internet connection and try again."
+        }
+    }
     static let storageRoot = "/sdcard"
 
     static func args(_ device: Device) -> [String] { ["-s", device.udid] }

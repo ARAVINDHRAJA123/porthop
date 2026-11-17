@@ -116,8 +116,10 @@ const SORTS = {
 };
 const natural = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 
-function view(assets, { filter = 'all', search = '', sort = 'date', ascending = false } = {}) {
+function view(assets, { filter = 'all', search = '', sort = 'date', ascending = false, from = null, to = null, minBytes = 0 } = {}) {
   let list = assets;
+  if (from != null && to != null) list = list.filter((a) => a.ts && a.ts >= from && a.ts <= to);
+  if (minBytes > 0) list = list.filter((a) => a.fileSize >= minBytes);
   if (filter !== 'all' && FILTERS[filter]) list = list.filter(FILTERS[filter]);
   const q = search.trim().toLowerCase();
   if (q) list = list.filter((a) => a.searchKey.includes(q));

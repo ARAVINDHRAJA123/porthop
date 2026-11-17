@@ -10,13 +10,15 @@ swiftc -swift-version 5 -O -target arm64-apple-macos13.0 -parse-as-library \
 cp Info.plist "$APP/Contents/Info.plist"
 if [ ! -f AppIcon.icns ]; then Icon/make_icons.sh; fi
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
-mkdir -p build
-clang -O2 -arch arm64 -I/opt/homebrew/include -L/opt/homebrew/lib Helpers/applist.c -limobiledevice-1.0 -lplist-2.0 -o build/applist
-python3 bundle_tools.py "$APP"
-mkdir -p "$APP/Contents/Resources/Licenses" && cp Licenses/* "$APP/Contents/Resources/Licenses/"
+# The iPhone tools are built from the official source for macOS 13 and later (cached after the first run).
+python3 build_tools.py
+mkdir -p "$APP/Contents/Helpers" && cp build/tools-mac/bin/* "$APP/Contents/Helpers/"
+L="$APP/Contents/Resources/Licenses"
+mkdir -p "$L" && cp -R build/tools-mac/licenses/* "$L/" && cp build/tools-mac/SOURCES.txt "$L/" && cp LICENSE "$L/PortHop-LICENSE.txt"
 codesign --force --deep --sign - "$APP"
-# Keep the copy in Applications current, unless that copy is open right now.
-if ! pgrep -f "/Applications/$APP/Contents/MacOS" >/dev/null; then
-  rm -rf "/Applications/$APP" && ditto "$APP" "/Applications/$APP" && echo "Installed to /Applications"
+# With --install, also copy it into Applications (skipped while that copy is open).
+if [ "${1:-}" = "--install" ]; then
+  if pgrep -f "/Applications/$APP/Contents/MacOS" >/dev/null; then echo "PortHop is open: quit it, then run ./build.sh --install again."
+  else rm -rf "/Applications/$APP" && ditto "$APP" "/Applications/$APP" && rm -rf "$APP" && echo "Installed to /Applications (build copy removed, so only one PortHop exists)"; fi
 fi
 echo "Built $APP"

@@ -1,0 +1,7 @@
+#!/bin/sh
+# Stand-in for idevicediagnostics. "restart" makes the simulated phone disappear, as a real restart would.
+case " $* " in
+  *" restart "*) touch "$FAKE_PHONE/.unplugged" ;;
+  *" ioregentry "*) echo '<plist><dict><key>CycleCount</key><integer>312</integer><key>DesignCapacity</key><integer>4400</integer><key>AppleRawMaxCapacity</key><integer>3960</integer></dict></plist>' ;;
+esac
+exit 0

@@ -325,6 +325,15 @@ extension Shell {
     }
 }
 
+/// Test-only switches (environment variables used by the UI checks) work only in builds compiled with `-D UITEST`.
+let uiTestBuild: Bool = {
+    #if UITEST
+    return true
+    #else
+    return false
+    #endif
+}()
+
 struct Tools {
     let ideviceId: String
     let ideviceInfo: String
@@ -336,8 +345,8 @@ struct Tools {
 
     static func locate() -> Tools? {
         var dirs = [Bundle.main.bundlePath + "/Contents/Helpers", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin",
-                    NSHomeDirectory() + "/.local/bin", Android.toolsDir]
-        if let override = ProcessInfo.processInfo.environment["IPHONE_TOOLS_DIR"], !override.isEmpty {
+                    NSHomeDirectory() + "/.local/bin"] + Android.toolsDirs
+        if uiTestBuild, let override = ProcessInfo.processInfo.environment["IPHONE_TOOLS_DIR"], !override.isEmpty {
             dirs.insert(override, at: 0)
         }
         if let path = ProcessInfo.processInfo.environment["PATH"] {
@@ -381,7 +390,7 @@ enum AFC {
         var seen = Set<String>()
         var out: [Device] = []
         for u in all("-l") where seen.insert(u).inserted { out.append(Device(udid: u, isNetwork: false)) }
-        for u in all("-n") where seen.insert(u).inserted { out.append(Device(udid: u, isNetwork: true)) }
+        // USB only: a phone that is merely on the same Wi-Fi is not "connected", and reading a library over Wi-Fi crawls.
         return out
     }
 

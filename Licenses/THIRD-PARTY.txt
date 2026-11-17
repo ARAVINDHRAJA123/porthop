@@ -1,8 +1,0 @@
-This app bundles unmodified command-line tools and libraries from the libimobiledevice project
-(libimobiledevice, libplist, libusbmuxd, libimobiledevice-glue), licensed under the
-GNU Lesser General Public License v2.1 or later: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
-Source code: https://github.com/libimobiledevice
-
-It also bundles OpenSSL (Apache License 2.0); see openssl-LICENSE.txt.
-
-They live in Contents/Helpers and Contents/Frameworks and can be replaced with your own builds.
