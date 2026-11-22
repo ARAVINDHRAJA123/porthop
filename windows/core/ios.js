@@ -14,7 +14,7 @@ function quote(s) {
   return '"' + s.replace(/\\/g, '\\\\').replace(/"/g, '\\"') + '"';
 }
 
-async function findDevices(tools) {
+async function findDevices(tools, { wifi = false } = {}) {
   if (!tools.hasApple) return [];
   const all = async (flag) => {
     const r = await run(tools.ideviceId, [flag], { timeout: 8 });
@@ -23,7 +23,8 @@ async function findDevices(tools) {
   };
   const seen = new Set(), out = [];
   for (const u of await all('-l')) if (!seen.has(u)) { seen.add(u); out.push({ udid: u, isNetwork: false, kind: 'apple' }); }
-  // USB only: an iPhone that is merely on the same Wi-Fi is not "connected", and reading a library over Wi-Fi crawls.
+  // USB by default: reading a whole library over Wi-Fi crawls. Wi-Fi phones are added only when the user opts in.
+  if (wifi) for (const u of await all('-n')) if (!seen.has(u)) { seen.add(u); out.push({ udid: u, isNetwork: true, kind: 'apple' }); }
   return out;
 }
 
@@ -197,18 +198,43 @@ async function power(action, device, tools) {
   return (await run(tools.diagnostics, [...base(device), action], { timeout: 20 })).ok;
 }
 
+// Thumbnails asked for together (a screenful) share one device connection: requests wait 40 ms to gather,
+// then up to 24 photos' small JPEGs are fetched in one afcclient session, with at most two sessions at a time.
+const waiting = new Map();   // udid -> [{ cmds, done }]
+let sessions = 0;
+function fetchSmall(asset, device, tools, small, smaller) {
+  const r1 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5005.JPG`), r2 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5003.JPG`);
+  if (!r1 || !r2) return Promise.resolve();
+  return new Promise((done) => {
+    const q = waiting.get(device.udid) || [];
+    q.push({ cmds: `get ${r1} ${quote(small)}\nget ${r2} ${quote(smaller)}\n`, done });
+    if (!waiting.has(device.udid)) { waiting.set(device.udid, q); setTimeout(() => flush(device, tools), 40); }
+  });
+}
+async function flush(device, tools) {
+  const q = waiting.get(device.udid) || [];
+  if (sessions >= 2) { setTimeout(() => flush(device, tools), 30); return; }
+  const batch = q.splice(0, 24);
+  if (!q.length) waiting.delete(device.udid); else setTimeout(() => flush(device, tools), 0);
+  if (!batch.length) return;
+  sessions++;
+  try { await run(tools.afc, base(device), { stdin: batch.map((b) => b.cmds).join('') + 'quit\n', timeout: 60 }); }
+  finally { sessions--; for (const b of batch) b.done(); }
+}
+
 /// A small preview picture the device keeps for each photo. Returns a local path or null.
 async function thumbnail(asset, device, tools, cacheDir) {
   fs.mkdirSync(cacheDir, { recursive: true });
-  const small = path.join(cacheDir, `${asset.id}_a.jpg`), smaller = path.join(cacheDir, `${asset.id}_b.jpg`);
+  // Photo IDs repeat across devices, so the cached files are named per device.
+  const tag = `${String(device.udid).slice(-12)}-${asset.uuid || asset.id}`;
+  const small = path.join(cacheDir, `${tag}_a.jpg`), smaller = path.join(cacheDir, `${tag}_b.jpg`);
   for (const f of [small, smaller]) if (fileSize(f) > 0) return f;
   // iOS keeps small pre-rendered JPEGs beside the library; the original is only fetched when they are missing.
-  const r1 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5005.JPG`), r2 = quote(`PhotoData/Thumbnails/V2/${asset.remotePath}/5003.JPG`);
-  if (r1 && r2) await run(tools.afc, base(device), { stdin: `get ${r1} ${quote(small)}\nget ${r2} ${quote(smaller)}\nquit\n`, timeout: 30 });
+  await fetchSmall(asset, device, tools, small, smaller);
   for (const f of [small, smaller]) if (fileSize(f) > 0) return f;
   // The browser window can show JPEG, PNG and GIF originals, but not HEIC.
   if (asset.isVideo || !/^(JPG|JPEG|PNG|GIF)$/.test(asset.ext) || asset.fileSize > 30_000_000) return null;
-  const full = path.join(cacheDir, `${asset.id}_full.${asset.ext.toLowerCase()}`);
+  const full = path.join(cacheDir, `${tag}_full.${asset.ext.toLowerCase()}`);
   if (fileSize(full) <= 0) await run(tools.afc, [...base(device), '--', 'get', asset.remotePath, full], { timeout: 60 });
   return fileSize(full) > 0 ? full : null;
 }

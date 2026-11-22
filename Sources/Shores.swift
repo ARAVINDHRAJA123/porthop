@@ -5,23 +5,7 @@ import UniformTypeIdentifiers
 // MARK: - Destinations
 
 /// A place copies can go: the Pictures folder, an external drive, or a folder used before.
-struct Destination: Identifiable, Equatable {
-    enum Kind { case pictures, drive, recent }
-    let id: String
-    let kind: Kind
-    let name: String
-    let detail: String
-    let url: URL
-    var free: Int64? = nil
-    var readOnly = false
-    var isFAT = false
-    var symbol: String {
-        switch kind {
-        case .pictures: return "photo.on.rectangle.angled"
-        case .drive: return "externaldrive.fill"
-        case .recent: return "folder.fill"
-        }
-    }
+extension Destination {
     var tint: Color {
         switch kind {
         case .pictures: return Color(red: 0.20, green: 0.74, blue: 0.86)
@@ -96,7 +80,11 @@ struct Pile: Identifiable {
                 Pile(id: "android:" + t.2, title: t.0, symbol: t.1, color: Theme.color(for: ""), count: nil, bytes: nil,
                      thumbs: [], blur: false, album: nil, androidPath: t.2)
             }
-            return (main, [])
+            let albums = m.androidAlbums.prefix(12).map { a in
+                Pile(id: "android:" + a.path, title: a.name, symbol: "photo.stack.fill", color: Theme.color(for: ""), count: a.count, bytes: a.bytes,
+                     thumbs: [], blur: false, album: nil, androidPath: a.path)
+            }
+            return (main, Array(albums))
         }
         func pile(_ a: AlbumCategory, symbol: String) -> Pile {
             let photos = Array(a.assets.lazy.filter { !$0.isVideo }.prefix(3))
@@ -267,6 +255,11 @@ struct ShoresView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+
+                if !m.presets.isEmpty {
+                    ShoreLabel(text: "Your hops").padding(.top, 10)
+                    VStack(spacing: 8) { ForEach(m.presets) { PresetRow(m: m, preset: $0) } }
+                }
 
                 if !m.isAndroid {
                     ShoreLabel(text: "Keep a full copy").padding(.top, 10)
@@ -846,5 +839,39 @@ struct SendToAppSheet: View {
         .padding(22)
         .frame(width: 420)
         .background(Theme.bg)
+    }
+}
+
+
+/// A saved hop: one click copies whatever is new in that group to that folder.
+struct PresetRow: View {
+    @ObservedObject var m: DeviceManager
+    let preset: DeviceManager.HopPreset
+    @State private var hover = false
+
+    var body: some View {
+        let album = m.album(for: preset)
+        let reachable = FileManager.default.fileExists(atPath: (preset.destination as NSString).deletingLastPathComponent)
+        let ready = album != nil && reachable && !m.isExporting
+        HStack(spacing: 12) {
+            IconTile(symbol: "arrow.triangle.2.circlepath", color: Color(nsColor: .systemIndigo), size: 34)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(preset.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.text).lineLimit(1)
+                Text(album == nil ? "Not on this \(m.deviceKind)" : (!reachable ? "Folder not connected" : "\(Fmt.count(album!.assets.count)) items · copies only what's new"))
+                    .font(.system(size: 11)).foregroundStyle(Theme.secondary).lineLimit(1)
+            }
+            Spacer(minLength: 6)
+            Button { m.runPreset(preset) } label: { Image(systemName: "play.fill").font(.system(size: 12, weight: .bold)) }
+                .buttonStyle(PrimaryButtonStyle()).disabled(!ready).help("Hop now")
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .contentSurface(RoundedRectangle(cornerRadius: 18, style: .continuous), highlighted: hover)
+        .onHover { hover = $0 }
+        .contextMenu {
+            Button("Hop Now") { m.runPreset(preset) }.disabled(!ready)
+            Button("Show Folder in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: preset.destination)]) }
+            Divider()
+            Button("Remove This Hop", role: .destructive) { m.deletePreset(preset) }
+        }
     }
 }

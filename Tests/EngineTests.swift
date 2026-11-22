@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 // Runs the export engine against the simulated iPhone and checks the counts.
 let T = CommandLine.arguments[1], bin = CommandLine.arguments[2]
 let tools = Tools(ideviceId: bin + "/idevice_id", ideviceInfo: bin + "/ideviceinfo", afc: bin + "/afcclient", applist: bin + "/applist")
@@ -20,6 +21,41 @@ check("hidden items appear only in Hidden", ExportSummary(destination: URL(fileU
       extra: !(cat.smart.dropFirst() + cat.user).contains { $0.id != "smart_trashed" && $0.assets.contains { hiddenIDs.contains($0.id) } })
 check("first export", run("out1"), copied: 38, skipped: 0, failed: 1)
 check("run again", run("out1"), copied: 0, skipped: 38, failed: 1)
+// Edited versions: IMG_0002 comes out as its rendered edit; IMG_0003 (render missing) and the rest stay originals.
+do {
+    var o = ExportOptions(); o.editedVersions = true
+    let flagsOK = hidden.filter(\.isEdited).map(\.filename).sorted() == ["IMG_0002.JPG", "IMG_0003.JPG"]
+        && hidden.filter(\.isCloudOnly).map(\.filename) == ["IMG_9000.HEIC"]
+    let s = run("edited", o)
+    let edited = (try? Data(contentsOf: URL(fileURLWithPath: T + "/edited/IMG_0002.jpg")))?.suffix(6) == Data("EDITED".utf8)
+    let original = FileManager.default.fileExists(atPath: T + "/edited/IMG_0003.JPG")
+    check("edited versions and iCloud-only flags", s, copied: 38, skipped: 0, failed: 1, extra: flagsOK && edited && original)
+}
+// Custom folder pattern: {year}/{month} {monthName}.
+do {
+    var o = ExportOptions(); o.subfolder = .custom; o.folderPattern = "{album}/{year}/{month} {monthName}"; o.albumName = "Hidden"
+    let s = run("pattern", o)
+    let years = (try? FileManager.default.contentsOfDirectory(atPath: T + "/pattern/Hidden")) ?? []
+    let months = years.first.flatMap { try? FileManager.default.contentsOfDirectory(atPath: T + "/pattern/Hidden/" + $0) } ?? []
+    check("custom folder pattern", s, copied: 38, skipped: 0, failed: 1,
+          extra: years.allSatisfy { $0.count == 4 && Int($0) != nil } && months.contains { $0.range(of: #"^\d\d [A-Z][a-z]+$"#, options: .regularExpression) != nil })
+}
+// HEIC → JPEG in-process: a real HEIC from macOS converts to a JPEG of the same size.
+do {
+    let heic = URL(fileURLWithPath: "/System/Library/Desktop Pictures/Mac Blue.heic"), jpg = URL(fileURLWithPath: T + "/converted.jpg")
+    let ok = FileManager.default.fileExists(atPath: heic.path) ? Exporter.heicToJPEG(heic, jpg) : true
+    let size = { (u: URL) -> [Int] in
+        guard let s = CGImageSourceCreateWithURL(u as CFURL, nil), let p = CGImageSourceCopyPropertiesAtIndex(s, 0, nil) as? [CFString: Any] else { return [] }
+        return [p[kCGImagePropertyPixelWidth] as? Int ?? 0, p[kCGImagePropertyPixelHeight] as? Int ?? 0] }
+    let same = !FileManager.default.fileExists(atPath: heic.path) || (size(jpg) == size(heic) && !size(jpg).isEmpty)
+    check("HEIC converts to JPEG in-process", ExportSummary(destination: URL(fileURLWithPath: "/")), copied: 0, skipped: 0, failed: 0, extra: ok && same)
+}
+// The Windows edition's older manifest was a list; the Mac must still recognise everything in it.
+let mfURL = URL(fileURLWithPath: T + "/out1/.iPhoneAlbumExtractor-manifest.json")
+if let obj = try? JSONSerialization.jsonObject(with: Data(contentsOf: mfURL)) as? [String: Any],
+   let list = try? JSONSerialization.data(withJSONObject: Array(obj.values)) { try? list.write(to: mfURL) }
+check("reads a Windows-style manifest", run("out1"), copied: 0, skipped: 38, failed: 1,
+      extra: ((try? JSONSerialization.jsonObject(with: Data(contentsOf: mfURL))) as? [String: Any])?.count == 38)
 try? FileManager.default.removeItem(atPath: T + "/out1/.iPhoneAlbumExtractor-manifest.json")
 check("adopt earlier export", run("out1"), copied: 1, skipped: 37, failed: 1)
 var o = ExportOptions(); o.includeLiveVideo = true; o.subfolder = .yearMonth; o.useOriginalNames = true
@@ -85,6 +121,11 @@ let quoted = Android.list("/sdcard/Pictures/It's here", device: ad, tools: at)
 check("android listing", blank, copied: 0, skipped: 0, failed: 0,
       extra: top.map(\.name) == ["DCIM", "Download", "Pictures"] && top.allSatisfy(\.isDirectory) && quoted.count == 1
         && cam.count == 1 && cam[0].name == "PXL 0001.jpg" && cam[0].size == AFC.fileSize(local) && cam[0].path == "/sdcard/DCIM/Camera/PXL 0001.jpg")
+let mediaAlbums = Android.mediaAlbums(ad, tools: at)
+check("android albums from MediaStore", blank, copied: 0, skipped: 0, failed: 0,
+      extra: mediaAlbums.map(\.path).sorted() == ["/sdcard/DCIM/Camera", "/sdcard/Pictures/It's here"]
+        && mediaAlbums.allSatisfy { $0.count == 1 && $0.bytes == AFC.fileSize(local) }
+        && Android.parseMediaAlbums("Row: 0 _data=/storage/1234-ABCD/DCIM/x.jpg, _size=5\nRow: 1 _data=/sdcard/Movies/a, b.mp4, _size=9").map(\.name) == ["Movies"])
 let pulled = URL(fileURLWithPath: T + "/pulled.jpg"), pulledDir = URL(fileURLWithPath: T + "/pulledDCIM")
 let p1 = Android.pull(cam[0].path, to: pulled, device: ad, tools: at)
 let p2 = Android.pull(cam[0].path, to: pulled, device: ad, tools: at)
@@ -110,6 +151,19 @@ check("backup messages", blank, copied: 0, skipped: 0, failed: 0,
 let wa = tree(.whatsapp)
 check("backup whatsapp", blank, copied: 0, skipped: 0, failed: 0,
       extra: wa.count == 2 && wa[0].title == "Family" && wa[0].rows[0][1] == "Uncle Ravi" && wa[0].rows[1][2].hasPrefix("(photo") && wa[1].rows[1] .dropFirst() == ["Me", "Yes"])
+// Chats as web pages: the attached photo is copied next to the page and shown in it.
+do {
+    let out = URL(fileURLWithPath: T + "/pages")
+    try? FileManager.default.createDirectory(at: out, withIntermediateDirectories: true)
+    let p1 = bk.webPage(msg[1], title: "Messages", into: out), p2 = bk.webPage(wa[0], title: "WhatsApp", into: out)
+    let h1 = p1.flatMap { try? String(contentsOf: $0) } ?? "", h2 = p2.flatMap { try? String(contentsOf: $0) } ?? ""
+    let a1 = p1.map { $0.deletingLastPathComponent().appendingPathComponent("attachments/IMG_5001.jpeg") }
+    let a2 = p2.map { $0.deletingLastPathComponent().appendingPathComponent("attachments/photo1.jpg") }
+    check("chats saved as web pages with attachments", blank, copied: 0, skipped: 0, failed: 0,
+          extra: msg[1].media[4] == [BackupFileRef(domain: "MediaDomain", path: "Library/SMS/Attachments/ab/12/GUID-1/IMG_5001.jpeg")]
+            && h1.contains("<img src=\"attachments/IMG_5001.jpeg\"") && h1.contains("Hi &quot;Asha&quot;, how are you?") && a1.map { AFC.fileSize($0) > 0 } == true
+            && h2.contains("attachments/photo1.jpg") && a2.map { AFC.fileSize($0) > 0 } == true && p1?.deletingLastPathComponent().lastPathComponent == "Asha Rao (Messages)")
+}
 let people = tree(.contacts)[0].rows, notes = tree(.notes)[0].rows, cals = tree(.calendar), web = tree(.safari)
 check("backup contacts, notes, calendar, safari", blank, copied: 0, skipped: 0, failed: 0,
       extra: people.count == 3 && people.contains(["Asha Rao", "", "(415) 555-0101", "asha@example.com"]) && notes.map { $0[0] } == ["Ideas", "Shopping"]
@@ -121,7 +175,7 @@ try! FileManager.default.createDirectory(atPath: T + "/bkout", withIntermediateD
 let ex1 = bk.extract(roll, rows: [0], to: URL(fileURLWithPath: T + "/bkout")), ex2 = bk.extract(roll, rows: [0], to: URL(fileURLWithPath: T + "/bkout"))
 let csv = BackupReader.csv(msg[1])
 check("backup files, extract, csv", blank, copied: 0, skipped: 0, failed: 0,
-      extra: noCalls.groups.isEmpty && noCalls.note.contains("encrypted") && fg.count == 6 && roll.title == "Camera Roll" && roll.rows == [["IMG_0001.JPG", "Media/DCIM/100APPLE"]]
+      extra: noCalls.groups.isEmpty && noCalls.note.contains("encrypted") && fg.count == 7 && roll.title == "Camera Roll" && roll.rows == [["IMG_0001.JPG", "Media/DCIM/100APPLE"]]
         && ex1.first?.lastPathComponent == "IMG_0001.JPG" && ex2.count == 1 && ex2[0] != ex1[0] && AFC.fileSize(ex1[0]) == 900
         && csv.hasPrefix("\"Date\",\"From\",\"Message\"\r\n") && csv.contains("\"Hi \"\"Asha\"\", how are you?\"")
         && BackupReader(folder: URL(fileURLWithPath: T + "/backup/0000-LOCKED")) == nil && Backup.existing(in: URL(fileURLWithPath: T + "/backup")).count == 3)
@@ -162,4 +216,49 @@ check("restore asks the tool correctly and explains failures", blank, copied: 0,
       extra: r1 == nil && pcts.last == 1 && asked1.contains("--source 0000-TEST restore --system --settings --reboot") && asked1.contains("password=none")
         && !asked1.contains("--remove") && r2?.contains("password") == true && r3 == nil && asked3.contains("--source 0000-SECURE") && asked3.contains("password=correct horse")
         && !asked3.components(separatedBy: " | ")[0].contains("correct horse") && r4?.contains("Find My") == true && r5?.contains("ErrorCode 211") == true && r5?.contains("Find My") == true)
+// Shared cases (Tests/golden), also run by the Windows edition's test/golden.js.
+do {
+    let golden = URL(fileURLWithPath: FileManager.default.currentDirectoryPath + "/golden")
+    let day = DateFormatter(); day.dateFormat = "yyyy-MM-dd"; day.locale = Locale(identifier: "en_US_POSIX")
+    func json(_ name: String) -> [[String: Any]] { (try? JSONSerialization.jsonObject(with: Data(contentsOf: golden.appendingPathComponent(name)))) as? [[String: Any]] ?? [] }
+    var askFails: [String] = []
+    let askCases = json("ask.json")
+    for c in askCases {
+        let ctx = c["context"] as? [String: Any] ?? [:]
+        var context = AskContext()
+        context.isAndroid = ctx["isAndroid"] as? Bool ?? false
+        context.userAlbums = (ctx["userAlbums"] as? [[String: String]] ?? []).map { ($0["id"]!, $0["title"]!) }
+        context.albums = context.userAlbums
+        context.destinations = (ctx["destinations"] as? [[String: String]] ?? []).map {
+            Destination(id: $0["name"]!, kind: $0["kind"] == "pictures" ? .pictures : ($0["kind"] == "drive" ? .drive : .recent),
+                        name: $0["name"]!, detail: "", url: URL(fileURLWithPath: "/tmp/" + $0["name"]!))
+        }
+        let i = AskParser.parse(c["text"] as! String, context)
+        let e = c["expect"] as? [String: Any] ?? [:]
+        var got: [String: Any] = [:]
+        if let v = i.route { got["route"] = v }
+        if let v = i.album { got["album"] = v }
+        if let v = i.filter { got["filter"] = String(describing: v) }
+        if let r = i.range { got["from"] = day.string(from: r.lowerBound); got["to"] = day.string(from: r.upperBound) }
+        if i.minBytes > 0 { got["minBytes"] = Int(i.minBytes) }
+        if let d = i.destination { got["dest"] = d.name }
+        if NSDictionary(dictionary: got) != NSDictionary(dictionary: e) { askFails.append("\(c["text"]!): got \(got), expected \(e)") }
+    }
+    for f in askFails { print("  ", f) }
+    check("shared Ask cases (\(askCases.count))", blank, copied: 0, skipped: 0, failed: 0, extra: !askCases.isEmpty && askFails.isEmpty)
+
+    var patFails: [String] = []
+    let patCases = json("patterns.json")
+    for c in patCases {
+        let date = day.date(from: c["date"] as! String)!.addingTimeInterval(12 * 3600)
+        let a = PhotoAsset(id: 1, uuid: "", directory: c["directory"] as! String, filename: "IMG_0001.JPG", originalFilename: "", fileSize: 1, width: 1, height: 1,
+                           duration: 0, isHidden: false, isFavorite: false, isTrashed: false, isVideo: false, isScreenshot: false, isSelfie: false,
+                           isLivePhoto: false, dateCreated: date, dateText: "", searchKey: "")
+        let got = SubfolderMode.folder(c["pattern"] as! String, a, album: c["album"] as! String)
+        if got != c["expect"] as! String { patFails.append("\(c["pattern"]!): got \(got), expected \(c["expect"]!)") }
+    }
+    for f in patFails { print("  ", f) }
+    check("shared folder-pattern cases (\(patCases.count))", blank, copied: 0, skipped: 0, failed: 0, extra: !patCases.isEmpty && patFails.isEmpty)
+}
+
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED"); exit(failures == 0 ? 0 : 1)

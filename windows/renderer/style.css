@@ -286,3 +286,10 @@ progress::-webkit-progress-bar { background: transparent; } progress::-webkit-pr
 .toast svg { width: 18px; height: 18px; color: var(--md-inverse-primary); }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; } }
+
+/* Saved hops */
+.hops { display: flex; flex-direction: column; gap: 8px; }
+.hop-row { display: flex; align-items: center; gap: 12px; padding: 10px 10px 10px 12px; border-radius: var(--r-xl); background: var(--md-surface-container); }
+.hop-row .tile.big { width: 40px; height: 40px; background: var(--md-tertiary-container) !important; color: var(--md-on-tertiary-container); }
+.hop-text { flex: 1; min-width: 0; } .hop-text b, .hop-text small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hop-text small { color: var(--md-on-surface-variant); font-size: 12px; }

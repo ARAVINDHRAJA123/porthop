@@ -36,7 +36,10 @@ function loadCatalog(dbPath) {
     const hidden = col('ZHIDDEN', '0', 'This iOS version does not mark hidden items the way this app expects, so the Hidden album cannot be identified.');
     const shot = cols.has('ZISDETECTEDSCREENSHOT') ? 'COALESCE(a.ZISDETECTEDSCREENSHOT, 0)'
       : (cols.has('Z1_ISDETECTEDSCREENSHOT') ? 'COALESCE(a.Z1_ISDETECTEDSCREENSHOT, 0)' : '0');
-    const sql = `SELECT a.Z_PK pk, a.ZDIRECTORY dir, a.ZFILENAME fn, ${orig} orig, ${size} size, ${hidden} hidden,
+    // Edited in Photos, and synced with iCloud Photos with the original not on the device.
+    const cloud = cols.has('ZCLOUDLOCALSTATE') && cols.has('ZCLOUDASSETGUID')
+      ? "CASE WHEN COALESCE(a.ZCLOUDASSETGUID, '') != '' AND COALESCE(a.ZCLOUDLOCALSTATE, 1) = 0 THEN 1 ELSE 0 END" : '0';
+    const sql = `SELECT a.Z_PK pk, ${col('ZUUID', "''")} uuid, ${col('ZHASADJUSTMENTS', '0')} edited, ${cloud} cloud, a.ZDIRECTORY dir, a.ZFILENAME fn, ${orig} orig, ${size} size, ${hidden} hidden,
         ${col('ZFAVORITE', '0')} fav, ${col('ZTRASHEDSTATE', '0')} trashed, ${col('ZKIND', '0')} kind, ${col('ZDATECREATED', '0')} ts,
         ${col('ZWIDTH', '0')} w, ${col('ZHEIGHT', '0')} h, ${col('ZDURATION', '0.0')} dur, ${shot} shot,
         ${col('ZCAMERACAPTUREDEVICE', '0')} cam, ${col('ZKINDSUBTYPE', '0')} sub
@@ -54,7 +57,7 @@ function loadCatalog(dbPath) {
       const dir = String(r.dir), fn = String(r.fn), dt = date ? dateText(date) : '—';
       const ext = fn.includes('.') ? fn.split('.').pop().toUpperCase() : '';
       const a = {
-        id: Number(r.pk), directory: dir, filename: fn, originalFilename: String(r.orig || fn), fileSize: Number(r.size) || 0,
+        id: Number(r.pk), uuid: String(r.uuid || ''), isEdited: Number(r.edited) !== 0, isCloudOnly: Number(r.cloud) !== 0, directory: dir, filename: fn, originalFilename: String(r.orig || fn), fileSize: Number(r.size) || 0,
         width: Number(r.w) || 0, height: Number(r.h) || 0, duration: Number(r.dur) || 0,
         isHidden: Number(r.hidden) !== 0, isFavorite: Number(r.fav) !== 0, isTrashed: Number(r.trashed) !== 0,
         isVideo: kind === 1, isScreenshot: Number(r.shot) !== 0 || sub === 10, isSelfie: Number(r.cam) === 1,

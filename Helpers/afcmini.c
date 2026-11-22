@@ -42,6 +42,7 @@ static FILE *open_local(const char *path, const char *mode) {
 static int local_exists(const char *path) { wchar_t *w = wide(path); DWORD a = GetFileAttributesW(w); free(w); return a != INVALID_FILE_ATTRIBUTES; }
 static int local_is_dir(const char *path) { wchar_t *w = wide(path); DWORD a = GetFileAttributesW(w); free(w); return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY); }
 static int local_mkdir(const char *path) { wchar_t *w = wide(path); int r = _wmkdir(w); free(w); return r; }
+static void local_remove(const char *path) { wchar_t *w = wide(path); _wremove(w); free(w); }
 #define SEP '\\'
 #else
 #include <dirent.h>
@@ -49,6 +50,7 @@ static FILE *open_local(const char *path, const char *mode) { return fopen(path,
 static int local_exists(const char *path) { struct stat st; return lstat(path, &st) == 0; }
 static int local_is_dir(const char *path) { struct stat st; return stat(path, &st) == 0 && S_ISDIR(st.st_mode); }
 static int local_mkdir(const char *path) { return mkdir(path, 0755); }
+static void local_remove(const char *path) { remove(path); }
 #define SEP '/'
 #endif
 
@@ -123,7 +125,10 @@ static int get_file(const char *remote, const char *local) {
     free(buf);
     if (fclose(f) != 0) rc = 1;
     afc_file_close(afc, handle);
-    if (rc) printf("Error: copy of %s did not complete\n", remote);
+    if (rc) {
+        local_remove(local);   // never leave a half-written file behind; a retry can then use the same path
+        printf("Error: copy of %s did not complete\n", remote);
+    }
     return rc;
 }
 

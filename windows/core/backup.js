@@ -314,9 +314,9 @@ class BackupReader {
     const names = await this.contactNames();
     const who = (a) => names.get(addressKey(a)) || a;
     const archive = db.columns('message').has('attributedBody') ? 'm.attributedBody' : 'NULL';
-    const groups = [], index = new Map();
+    const groups = [], index = new Map(), place = new Map();   // message → [conversation, row], for attachments
     const rows = db.prepare(`SELECT c.ROWID chat, COALESCE(c.display_name,'') named, COALESCE(c.chat_identifier,'') ident, CAST(m.date AS REAL) date,
-        m.is_from_me me, COALESCE(h.id,'') handle, m.text text, ${archive} body, COALESCE(m.cache_has_attachments, 0) att
+        m.is_from_me me, COALESCE(h.id,'') handle, m.text text, ${archive} body, COALESCE(m.cache_has_attachments, 0) att, m.ROWID mid
       FROM chat_message_join j JOIN message m ON m.ROWID = j.message_id JOIN chat c ON c.ROWID = j.chat_id
       LEFT JOIN handle h ON h.ROWID = m.handle_id ORDER BY m.date`).all();
     for (const r of rows) {
@@ -325,7 +325,22 @@ class BackupReader {
       if (!body && r.body) body = textFromArchive(r.body) || '';
       body = body.replace(/￼/g, '').trim();
       if (!body) body = Number(r.att) ? '(attachment)' : '(no text)';
-      groups[index.get(r.chat)].rows.push([stamp(r.date), Number(r.me) ? 'Me' : who(r.handle), body]);
+      const g = groups[index.get(r.chat)];
+      g.rows.push([stamp(r.date), Number(r.me) ? 'Me' : who(r.handle), body]);
+      place.set(Number(r.mid), [g, g.rows.length - 1]);
+    }
+    // Attachments live in MediaDomain under the path the message gives ("~/Library/SMS/Attachments/…").
+    if (db.columns('attachment').has('filename') && db.columns('message_attachment_join').size) {
+      for (const a of db.prepare("SELECT j.message_id mid, COALESCE(a.filename,'') f FROM message_attachment_join j JOIN attachment a ON a.ROWID = j.attachment_id").all()) {
+        const at = place.get(Number(a.mid));
+        if (!at) continue;
+        let p = String(a.f);
+        if (p.startsWith('~/')) p = p.slice(2); else if (p.includes('/Library/SMS/')) p = p.slice(p.indexOf('/Library/SMS/') + 1);
+        if (!p) continue;
+        const [g, row] = at;
+        g.media = g.media || {};
+        (g.media[row] = g.media[row] || []).push({ domain: 'MediaDomain', path: p });
+      }
     }
     return { groups: BackupReader.newestFirst(groups) };
   }
@@ -339,12 +354,17 @@ class BackupReader {
       index.set(r.pk, groups.length);
       groups.push({ id: Number(r.pk), title: r.name || number, subtitle: r.jid.endsWith('@g.us') ? 'Group' : number, columns: ['Date', 'From', 'Message'], rows: [] });
     }
-    const push = db.columns('ZWAMESSAGE').has('ZPUSHNAME') ? "COALESCE(ZPUSHNAME,'')" : "''";
-    for (const r of db.prepare(`SELECT ZCHATSESSION chat, CAST(ZMESSAGEDATE AS REAL) date, ZISFROMME me, ZTEXT text, ${push} push FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE`).all()) {
+    const cols = db.columns('ZWAMESSAGE');
+    const push = cols.has('ZPUSHNAME') ? "COALESCE(ZPUSHNAME,'')" : "''";
+    // Photos, videos and documents: the media item's path, under Message/ in WhatsApp's shared group.
+    const media = cols.has('ZMEDIAITEM') && db.columns('ZWAMEDIAITEM').has('ZMEDIALOCALPATH')
+      ? "COALESCE((SELECT ZMEDIALOCALPATH FROM ZWAMEDIAITEM WHERE Z_PK = ZWAMESSAGE.ZMEDIAITEM),'')" : "''";
+    for (const r of db.prepare(`SELECT ZCHATSESSION chat, CAST(ZMESSAGEDATE AS REAL) date, ZISFROMME me, ZTEXT text, ${push} push, ${media} media FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE`).all()) {
       const g = groups[index.get(r.chat)];
       if (!g) continue;
       const from = Number(r.me) ? 'Me' : (g.subtitle === 'Group' ? (r.push || 'Member') : g.title);
       g.rows.push([stamp(r.date), from, r.text || '(photo, video or other attachment)']);
+      if (r.media) { g.media = g.media || {}; g.media[g.rows.length - 1] = [{ domain: 'AppDomainGroup-group.net.whatsapp.WhatsApp.shared', path: 'Message/' + String(r.media).replace(/^\//, '') }]; }
     }
     return { groups: BackupReader.newestFirst(groups.filter((g) => g.rows.length)) };
   }
@@ -430,6 +450,59 @@ class BackupReader {
       g.fileIDs.push(r.fileID);
     }
     return { groups };
+  }
+
+  /// A conversation as a web page anyone can open: a folder with index.html and the attachments that are in the backup.
+  /// Same page as the Mac edition writes. Returns the page's path, or null. Never overwrites.
+  async webPage(group, kindTitle, folder) {
+    const { uniquePath } = require('./shell');
+    const safe = String(group.title).replace(/[\\/:*?"<>|\r\n]/g, '-').trim().slice(0, 80) || 'Untitled';
+    const preferred = path.join(folder, `${safe} (${kindTitle})`);
+    const dir = fs.existsSync(preferred) ? uniquePath(preferred) : preferred;
+    const files = path.join(dir, 'attachments');
+    try { fs.mkdirSync(files, { recursive: true }); } catch { return null; }
+    const esc = (t) => String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/\n/g, '<br>');
+    const used = new Set();
+    let body = '';
+    for (const [r, row] of group.rows.entries()) {
+      let extras = '';
+      for (const ref of (group.media && group.media[r]) || []) {
+        const base = ref.path.split('/').pop();
+        const id = this.fileID(ref.domain, ref.path), src = id && await this.plain(id);
+        if (!src) { extras += `<div class="missing">Attachment not in this backup: ${esc(base)}</div>`; continue; }
+        let name = base, n = 2;
+        const dot = base.lastIndexOf('.'), stem = dot > 0 ? base.slice(0, dot) : base, ext = dot > 0 ? base.slice(dot + 1) : '';
+        while (used.has(name.toLowerCase())) name = `${stem} (${n++})${ext ? '.' + ext : ''}`;
+        used.add(name.toLowerCase());
+        try { fs.copyFileSync(src, path.join(files, name), fs.constants.COPYFILE_EXCL); } catch { continue; }
+        const link = 'attachments/' + encodeURIComponent(name);
+        if (/^(jpe?g|png|gif|heic|webp)$/i.test(ext)) extras += `<a href="${link}"><img src="${link}" alt="${esc(name)}"></a>`;
+        else if (/^(mov|mp4|m4v)$/i.test(ext)) extras += `<video controls src="${link}"></video>`;
+        else extras += `<a class="file" href="${link}">${esc(name)}</a>`;
+      }
+      const text = /^\(.*\)$/.test(row[2]) && extras ? '' : esc(row[2]);
+      body += `<div class="msg${row[1] === 'Me' ? ' me' : ''}"><div class="meta">${esc(row[1])} · ${esc(row[0])}</div>${text ? `<div class="text">${text}</div>` : ''}${extras}</div>\n`;
+    }
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(group.title)}</title>
+<style>
+:root { color-scheme: light dark; --me: #0a84ff; --them: #e9e9eb; --themText: #000; }
+@media (prefers-color-scheme: dark) { :root { --them: #2c2c2e; --themText: #fff; } }
+body { font: 15px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+h1 { font-size: 22px; margin: 0 0 4px; } .sub { opacity: .6; margin-bottom: 20px; }
+.msg { max-width: 75%; margin: 8px 0; } .msg.me { margin-left: auto; text-align: right; }
+.meta { font-size: 12px; opacity: .55; margin: 0 8px 2px; }
+.text { display: inline-block; text-align: left; padding: 8px 12px; border-radius: 18px; background: var(--them); color: var(--themText); overflow-wrap: anywhere; }
+.me .text { background: var(--me); color: #fff; }
+img, video { display: block; max-width: 320px; max-height: 320px; border-radius: 14px; margin: 4px 0 0 auto; } .msg:not(.me) img, .msg:not(.me) video { margin-left: 0; }
+.file, .missing { display: inline-block; padding: 6px 10px; border-radius: 10px; background: var(--them); color: var(--themText); margin-top: 4px; font-size: 13px; }
+.missing { opacity: .6; }
+</style></head><body>
+<h1>${esc(group.title)}</h1><div class="sub">${esc(kindTitle)} · ${group.rows.length} messages · saved by PortHop from a device backup</div>
+${body}</body></html>`;
+    const page = path.join(dir, 'index.html');
+    try { fs.writeFileSync(page, html, { flag: 'wx' }); } catch { return null; }
+    try { if (!fs.readdirSync(files).length) fs.rmdirSync(files); } catch {}
+    return page;
   }
 
   /// Copies files out of the backup under their real names. Never overwrites. Returns the files written.

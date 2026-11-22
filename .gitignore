@@ -4,3 +4,6 @@ AppIcon.iconset/
 build/
 .tools-cache/
 release/
+.build/
+.swiftpm/
+windows/installer/Output/

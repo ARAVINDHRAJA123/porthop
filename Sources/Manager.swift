@@ -48,6 +48,8 @@ final class DeviceManager: ObservableObject {
 
     // Export
     @Published var options = ExportOptions()
+    /// Android: folders of photos and videos from the phone's media index, shown as albums.
+    @Published var androidAlbums: [Android.MediaAlbum] = []
     @Published var exportRequest: ExportRequest?
     @Published var isExporting = false { didSet { updateAwake() } }
     @Published var isStopping = false
@@ -112,6 +114,9 @@ final class DeviceManager: ObservableObject {
         let assets: [PhotoAsset]
         let title: String
         var destination: URL? = nil
+        /// The whole group being copied (set only when every item in it is included), for saved hops and {album}.
+        var albumID: String? = nil
+        var albumName = ""
     }
 
     var isReady: Bool { phase == .ready }
@@ -255,6 +260,7 @@ final class DeviceManager: ObservableObject {
     }
 
     private func reset(to newPhase: Phase) {
+        androidAlbums = []
         device = nil
         smartAlbums = []; userAlbums = []; catalogWarnings = []; apps = []
         selectedIDs.removeAll()
@@ -306,6 +312,8 @@ final class DeviceManager: ObservableObject {
                     if !["nav_home", "nav_device"].contains(self.selection ?? "") { self.selection = "nav_home" }
                     self.runLaunchAction()
                 }
+                let albums = Android.mediaAlbums(device, tools: tools)
+                await MainActor.run { if self.device?.udid == device.udid { self.androidAlbums = albums } }
                 return
             }
             guard let info = AFC.details(device, tools: tools) else {
@@ -394,6 +402,13 @@ final class DeviceManager: ObservableObject {
                 startExport(album.assets, to: URL(fileURLWithPath: parts[1]))
             }
         }
+        else if action.hasPrefix("ask:") {   // the copy sheet for one group to a folder, as when it is dropped there
+            let parts = action.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
+            if parts.count == 2, let album = (smartAlbums + userAlbums).first(where: { $0.id == parts[0] }) {
+                options.subfolder = .custom; options.folderPattern = "{album}/{year}/{month} {monthName}"
+                requestHop(album, to: URL(fileURLWithPath: parts[1]))
+            }
+        }
         else if action.hasPrefix("select:") { selection = String(action.dropFirst(7)) }
         else if action.hasPrefix("backup:") { backupFolder = URL(fileURLWithPath: String(action.dropFirst(7))); selection = "nav_backup"; startBackup() }
     }
@@ -432,7 +447,8 @@ final class DeviceManager: ObservableObject {
     func requestHop(_ album: AlbumCategory, to destination: URL) {
         guard !album.assets.isEmpty, !isExporting else { return }
         let n = album.assets.count
-        exportRequest = ExportRequest(assets: album.assets, title: "Copy \(Fmt.count(n)) item\(n == 1 ? "" : "s") from \(album.title)", destination: destination)
+        exportRequest = ExportRequest(assets: album.assets, title: "Copy \(Fmt.count(n)) item\(n == 1 ? "" : "s") from \(album.title)",
+                                      destination: destination, albumID: album.id, albumName: album.title)
     }
 
     /// Android storage folders dropped on a destination are copied whole.
@@ -464,10 +480,12 @@ final class DeviceManager: ObservableObject {
         guard !items.isEmpty else { return }
         let title = selectedOnly ? "Copy \(Fmt.count(items.count)) selected item\(items.count == 1 ? "" : "s")"
                                  : "Copy \(Fmt.count(items.count)) item\(items.count == 1 ? "" : "s") from \(currentAlbum?.title ?? "album")"
-        exportRequest = ExportRequest(assets: items, title: title, destination: pendingDestination)
+        let whole = !selectedOnly && currentAlbum.map { $0.assets.count == items.count } == true
+        exportRequest = ExportRequest(assets: items, title: title, destination: pendingDestination,
+                                      albumID: whole ? currentAlbum?.id : nil, albumName: currentAlbum?.title ?? "")
     }
 
-    func startExport(_ assets: [PhotoAsset], to destination: URL) {
+    func startExport(_ assets: [PhotoAsset], to destination: URL, albumName: String? = nil, options override: ExportOptions? = nil) {
         guard let device, let tools, !assets.isEmpty, !isExporting else { return }
         UserDefaults.standard.set(destination.path, forKey: "lastDestination")
         rememberDestination(destination)
@@ -479,7 +497,8 @@ final class DeviceManager: ObservableObject {
         var p = ExportProgress()
         p.total = assets.count
         progress = p
-        let opts = options
+        var opts = override ?? options
+        opts.albumName = albumName ?? currentAlbum?.title ?? ""
         var lastEmit = Date.distantPast
         Task.detached {
             let result = Exporter.run(assets: assets, destination: destination, options: opts, device: device, tools: tools, job: job) { p in
@@ -504,6 +523,48 @@ final class DeviceManager: ObservableObject {
                 if result.isClean { NSSound(named: "Glass")?.play() }
             }
         }
+    }
+
+    // MARK: Saved hops
+
+    /// A copy saved for one click: a whole group to a folder, with its options. Running it again copies only what is new.
+    struct HopPreset: Codable, Identifiable, Equatable {
+        var id = UUID()
+        var name: String
+        var albumID: String
+        var destination: String
+        var editedVersions = false
+        var convertHEIC = false
+        var includeLiveVideo = false
+        var useOriginalNames = false
+        var subfolder = SubfolderMode.flat.rawValue
+        var folderPattern = "{year}/{month}"
+    }
+
+    @Published var presets: [HopPreset] = (try? JSONDecoder().decode([HopPreset].self, from: UserDefaults.standard.data(forKey: "hopPresets") ?? Data())) ?? []
+
+    private func savePresets() { UserDefaults.standard.set(try? JSONEncoder().encode(presets), forKey: "hopPresets") }
+
+    func savePreset(name: String, albumID: String, destination: URL, options o: ExportOptions) {
+        presets.removeAll { $0.albumID == albumID && $0.destination == destination.path }
+        presets.append(HopPreset(name: name, albumID: albumID, destination: destination.path, editedVersions: o.editedVersions,
+                                 convertHEIC: o.convertHEIC, includeLiveVideo: o.includeLiveVideo, useOriginalNames: o.useOriginalNames,
+                                 subfolder: o.subfolder.rawValue, folderPattern: o.folderPattern))
+        savePresets()
+    }
+
+    func deletePreset(_ p: HopPreset) { presets.removeAll { $0.id == p.id }; savePresets() }
+
+    /// The group a saved hop copies, on the device connected now (nil if it has no such group).
+    func album(for p: HopPreset) -> AlbumCategory? { (smartAlbums + userAlbums).first { $0.id == p.albumID } }
+
+    func runPreset(_ p: HopPreset) {
+        guard let album = album(for: p), !album.assets.isEmpty else { return }
+        var o = ExportOptions()
+        o.skipExisting = true
+        o.editedVersions = p.editedVersions; o.convertHEIC = p.convertHEIC; o.includeLiveVideo = p.includeLiveVideo
+        o.useOriginalNames = p.useOriginalNames; o.subfolder = SubfolderMode(rawValue: p.subfolder) ?? .flat; o.folderPattern = p.folderPattern
+        startExport(album.assets, to: URL(fileURLWithPath: p.destination), albumName: album.title, options: o)
     }
 
     func stopExport() {

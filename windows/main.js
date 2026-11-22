@@ -49,6 +49,12 @@ const backupFolder = () => (TEST && env.PAE_BACKUP_DIR) || settings.backupFolder
 const isAndroid = () => S.device && S.device.kind === 'android';
 const working = () => !!(jobs.export || jobs.transfer || jobs.backup);
 const albums = () => [...S.smart, ...S.user];
+// Photo by ID, rebuilt only when a new library is loaded, so each thumbnail request is one lookup.
+let byIdFor = null, byId = new Map();
+const assetById = (id) => {
+  if (byIdFor !== S.smart) { byIdFor = S.smart; byId = new Map(); for (const al of albums()) for (const a of al.assets) byId.set(a.id, a); }
+  return byId.get(id);
+};
 const album = (id) => albums().find((a) => a.id === id);
 
 function snapshot() {
@@ -60,19 +66,19 @@ function snapshot() {
     hasAdb: !!(tools && tools.adb), hasApple: !!(tools && tools.hasApple), canPower: !!(tools && (isAndroid() ? tools.adb : tools.diagnostics)),
     canBackup: !!(tools && tools.backup), isWindows: WIN, backupFolder: backupFolder(),
     restarting: !!S.restartingSince && Date.now() - S.restartingSince < 600000, restartingName: S.restartingName,
-    lastHop: settings.lastHop || '', exportDest: S.exportDest || null,
+    lastHop: settings.lastHop || '', exportDest: S.exportDest || null, androidAlbums: isAndroid() ? (S.androidAlbums || []).slice(0, 12) : [],
   };
 }
 function push() { if (win && !win.isDestroyed()) win.webContents.send('state', snapshot()); }
 function send(channel, payload) { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); }
 
-function reset(phase, message = '') {
+function reset(phase, message = '') { S.androidAlbums = [];
   S.device = null; S.details = null; S.smart = []; S.user = []; S.warnings = []; S.apps = [];
   S.phase = phase; S.message = message;
   push();
 }
 
-async function allDevices() { return [...await ios.findDevices(tools), ...await android.findDevices(tools)]; }
+async function allDevices() { return [...await ios.findDevices(tools, { wifi: !!settings.includeWiFi }), ...await android.findDevices(tools)]; }
 const label = (d) => (d.kind === 'android' ? android.name(d, tools) : ios.name(d, tools));
 
 async function connect(silent) {
@@ -92,6 +98,7 @@ async function connect(silent) {
       if (!info) return reset('needsTrust', device.unauthorized ? 'Unlock the Android device and tap Allow on the “Allow USB debugging?” message.'
         : 'The Android device is connected but did not answer. Unlock it and keep it plugged in.');
       S.device = device; S.details = info; S.names[device.udid] = info.name;
+      android.mediaAlbums(device, tools).then((al) => { if (S.device && S.device.udid === device.udid) { S.androidAlbums = al; push(); } });
       S.smart = []; S.user = []; S.warnings = []; S.apps = [];
       S.restartingSince = 0; S.phase = 'ready'; push();
       return;
@@ -224,6 +231,25 @@ const handlers = {
     if (fs.statSync(t).isDirectory()) shell.openPath(t); else shell.showItemInFolder(t);
   },
   copy: (text) => { require('electron').clipboard.writeText(String(text)); },
+
+  // What the copy dialog needs to know about a set before copying: edits, iCloud-only items, HEIC photos.
+  'export:facts': ({ query, ids }) => {
+    let assets = rowsFor(query);
+    if (ids) { const set = new Set(ids); assets = assets.filter((a) => set.has(a.id)); }
+    return { edited: assets.filter((a) => a.isEdited).length, cloud: assets.filter((a) => a.isCloudOnly).length, heic: assets.filter((a) => a.isHEIC).length };
+  },
+  // Saved hops: a whole group to a folder with its options; running one copies only what's new.
+  'presets:list': () => (settings.presets || []).map((p) => {
+    const al = album(p.albumID);
+    let parent = path.dirname(p.dest);
+    return { ...p, count: al ? al.assets.length : 0, title: al ? al.title : '', onDevice: !!al, reachable: fs.existsSync(parent) };
+  }),
+  'presets:save': (p) => {
+    settings.presets = (settings.presets || []).filter((x) => !(x.albumID === p.albumID && x.dest === p.dest));
+    settings.presets.push({ id: require('node:crypto').randomUUID(), name: String(p.name), albumID: String(p.albumID), dest: String(p.dest), options: p.options || {} });
+    saveSettings();
+  },
+  'presets:delete': (id) => { settings.presets = (settings.presets || []).filter((x) => x.id !== id); saveSettings(); },
 
   'export:start': async ({ query, ids, dest, options }) => {
     if (working() || !S.device || isAndroid()) return null;
@@ -366,6 +392,13 @@ const handlers = {
     if (first) { if (groups.length > 1) shell.openPath(target); else shell.showItemInFolder(first); }
     return { written, total: groups.length };
   },
+  'data:page': async ({ id, folder }) => {
+    const g = data.result && data.result.groups.find((x) => x.id === id);
+    if (!g || !data.reader) return null;
+    const page = await data.reader.webPage(g, bk.KINDS[data.kind].title, folder);
+    if (page) shell.showItemInFolder(page);
+    return { page, attachments: Object.values(g.media || {}).reduce((n, l) => n + l.length, 0) };
+  },
   'data:extract': async ({ id, rows, folder }) => {
     const g = data.result && data.result.groups.find((x) => x.id === id);
     if (!g || !data.reader) return null;
@@ -388,6 +421,18 @@ const handlers = {
         : await run('unzip', ['-o', '-q', zip, '-d', dir], { timeout: 180 });
       fs.rmSync(zip, { force: true });
       if (!r.ok) return 'The download finished but could not be unpacked.';
+      if (WIN) {
+        // Only keep the tools if adb.exe carries a valid Authenticode signature from Google (the Mac edition checks
+        // Google's Apple signature the same way).
+        const exe = path.join(dir, 'platform-tools', 'adb.exe');
+        const sig = await run('powershell.exe', ['-NoProfile', '-Command',
+          `$s = Get-AuthenticodeSignature -LiteralPath '${exe.replace(/'/g, "''")}'; "$($s.Status)|$($s.SignerCertificate.Subject)"`], { timeout: 60 });
+        const [status, subject = ''] = (sig.output || '').trim().split('|');
+        if (!sig.ok || status !== 'Valid' || !/O=Google LLC/i.test(subject)) {
+          fs.rmSync(path.join(dir, 'platform-tools'), { recursive: true, force: true });
+          return 'The download could not be confirmed as Google\'s own Android tools, so it was removed. Try again later.';
+        }
+      }
       tools = locateTools(process.resourcesPath, TEST);
       push();
       connect(true);
@@ -401,6 +446,7 @@ const handlers = {
     if (fs.existsSync(p)) shell.openPath(p);
   },
   github: () => shell.openExternal('https://github.com/ARAVINDHRAJA123/porthop'),
+  wifi: (v) => { if (typeof v === 'boolean') { settings.includeWiFi = v; saveSettings(); connect(true); } return !!settings.includeWiFi; },
   // Light, dark or following Windows ('system'). The page's colours switch with it through prefers-color-scheme.
   appearance: (v) => {
     if (['system', 'light', 'dark'].includes(v)) { settings.appearance = v; saveSettings(); nativeTheme.themeSource = v; }
@@ -409,7 +455,7 @@ const handlers = {
 
   thumb: async (id) => {
     if (!S.device || isAndroid()) return null;
-    const a = albums().flatMap((x) => x.assets).find((x) => x.id === id);
+    const a = assetById(id);
     return a ? ios.thumbnail(a, S.device, tools, path.join(tempRoot, 'thumbs')) : null;
   },
 };

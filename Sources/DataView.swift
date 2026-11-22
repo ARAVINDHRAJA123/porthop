@@ -95,6 +95,22 @@ extension DeviceManager {
         return name.isEmpty ? "Untitled" : String(name.prefix(80))
     }
 
+    /// Saves the open conversation as a web page with its photos and files, and shows it in Finder.
+    func saveWebPage(to folder: URL) {
+        guard let group = dataGroup, let reader = dataReader, let kind = dataKind else { return }
+        dataMessage = "Saving…"
+        Task.detached {
+            let page = reader.webPage(group, title: kind.title, into: folder)
+            let attached = group.media.values.reduce(0) { $0 + $1.count }
+            await MainActor.run {
+                if let page {
+                    self.dataMessage = attached > 0 ? "Saved, with its attachments that are in the backup." : "Saved."
+                    NSWorkspace.shared.activateFileViewerSelecting([page])
+                } else { self.dataMessage = "The page could not be written to that folder." }
+            }
+        }
+    }
+
     /// Writes one sheet, or every sheet, as spreadsheet files. Never overwrites.
     func saveSpreadsheets(all: Bool, to folder: URL) {
         guard let data, let kind = dataKind else { return }
@@ -286,6 +302,11 @@ struct BackupDataView: View {
                 if (m.data?.groups.count ?? 0) > 1 {
                     Button { pickFolder("Save Here") { m.saveSpreadsheets(all: true, to: $0) } } label: { Label("Save All…", systemImage: "square.and.arrow.down.on.square") }
                         .buttonStyle(SoftButtonStyle())
+                }
+                if kind == .messages || kind == .whatsapp {
+                    Button { pickFolder("Save Here") { m.saveWebPage(to: $0) } } label: { Label("Save as Web Page…", systemImage: "doc.richtext") }
+                        .buttonStyle(SoftButtonStyle()).disabled(m.dataGroup == nil)
+                        .help("A page you can open in any browser, with the photos and files from this chat")
                 }
                 Button { pickFolder("Save Here") { m.saveSpreadsheets(all: false, to: $0) } } label: { Label("Save This…", systemImage: "square.and.arrow.down") }
                     .buttonStyle(PrimaryButtonStyle()).disabled(m.dataGroup == nil)

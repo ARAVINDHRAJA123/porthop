@@ -17,10 +17,14 @@ const { packager } = require('@electron/packager');
   const [out] = await packager({
     dir: __dirname, name: 'PortHop', platform: 'win32', arch: 'x64', out: path.join(__dirname, 'dist'), overwrite: true,
     icon: path.join(__dirname, 'icon.ico'), extraResource: [tools], prune: true, asar: true,
-    ignore: [/^\/(test|dist|tools-win|tools|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
+    ignore: [/^\/(test|dist|tools-win|tools|installer|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
     appCopyright: 'Bundled device tools are open source; see resources/tools/licenses.',
     win32metadata: { CompanyName: 'PortHop', FileDescription: 'PortHop', ProductName: 'PortHop' },
   });
+  // PortHop's interface is English only: keep Chromium's English strings and drop the other 54 languages (~48 MB).
+  // Electron falls back to en-US on any system language.
+  const locales = path.join(out, 'locales');
+  for (const f of fs.readdirSync(locales)) if (f !== 'en-US.pak') fs.rmSync(path.join(locales, f));
   fs.copyFileSync(path.join(__dirname, 'README.md'), path.join(out, 'READ ME FIRST.txt'));
   const zip = path.join(__dirname, 'dist', 'PortHop-Windows.zip');
   fs.rmSync(zip, { force: true });

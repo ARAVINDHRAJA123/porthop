@@ -27,8 +27,14 @@ module.exports = async function (T, check, macTests) {
     const out = path.join(T, `bkout-${label}`); fs.mkdirSync(out);
     const e1 = await reader.extract(roll, [0], out), e2 = await reader.extract(roll, [0], out);
     const text = bk.csv(msg[1]);
-    ck(`${label} backup files, extract, csv`, calls.groups.length === 0 && calls.note.length > 10 && fg.length === 6 && roll.title === 'Camera Roll' && e1.length === 1 && e2.length === 1 && e1[0] !== e2[0]
+    ck(`${label} backup files, extract, csv`, calls.groups.length === 0 && calls.note.length > 10 && fg.length === 7 && roll.title === 'Camera Roll' && e1.length === 1 && e2.length === 1 && e1[0] !== e2[0]
       && fs.readFileSync(e1[0]).equals(Buffer.from('jpegbytes'.repeat(100))) && text.startsWith('"Date","From","Message"\r\n') && text.includes('"Hi ""Asha"", how are you?"'), JSON.stringify([calls, e1, e2]));
+    const pages = path.join(T, `pages-${label}`); fs.mkdirSync(pages);
+    const p1 = await reader.webPage(msg[1], 'Messages', pages), p2 = await reader.webPage(wa[0], 'WhatsApp', pages);
+    const h1 = p1 ? fs.readFileSync(p1, 'utf8') : '', h2 = p2 ? fs.readFileSync(p2, 'utf8') : '';
+    ck(`${label} chats saved as web pages with attachments`, path.basename(path.dirname(p1 || '')) === 'Asha Rao (Messages)'
+      && h1.includes('<img src="attachments/IMG_5001.jpeg"') && h1.includes('Hi &quot;Asha&quot;, how are you?') && fs.statSync(path.join(path.dirname(p1), 'attachments', 'IMG_5001.jpeg')).size === 600
+      && h2.includes('attachments/photo1.jpg') && fs.statSync(path.join(path.dirname(p2), 'attachments', 'photo1.jpg')).size === 550, JSON.stringify([p1, p2]));
     const temp = reader.temp; reader.close();
     ck(`${label} backup working copies removed`, !fs.existsSync(temp));
   }

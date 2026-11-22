@@ -112,4 +112,26 @@ async function power(action, device, tools) {
   return false;
 }
 
-module.exports = { ROOT, findDevices, name, details, list, pull, push, mkdir, power };
+/// Folders of photos and videos from Android's media index (MediaStore), biggest first: Camera, Screenshots, WhatsApp Images…
+async function mediaAlbums(device, tools) {
+  const out = await shell("content query --uri content://media/external/file --projection _data:_size --where 'media_type=1 OR media_type=3'", device, tools, 60);
+  return out ? parseMediaAlbums(out) : [];
+}
+function parseMediaAlbums(out) {
+  const byDir = new Map();
+  for (const line of out.split('\n')) {
+    const m = line.match(/^Row: \d+ _data=(.*?)(?:, _size=(\d+))?\s*$/);
+    if (!m) continue;
+    let p = m[1];
+    for (const pre of ['/storage/emulated/0', '/sdcard']) if (p.startsWith(pre + '/')) p = ROOT + p.slice(pre.length);
+    if (!p.startsWith(ROOT + '/')) continue;   // SD cards and other volumes are not browsed here
+    const dir = p.slice(0, p.lastIndexOf('/'));
+    const cur = byDir.get(dir) || { count: 0, bytes: 0 };
+    cur.count++; cur.bytes += Number(m[2] || 0);
+    byDir.set(dir, cur);
+  }
+  return [...byDir].map(([path, v]) => ({ name: path.split('/').pop(), path, ...v }))
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+module.exports = { ROOT, mediaAlbums, parseMediaAlbums, findDevices, name, details, list, pull, push, mkdir, power };

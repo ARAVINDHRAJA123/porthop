@@ -1,0 +1,8 @@
+[
+  { "pattern": "{album}/{year}/{month} {monthName}", "date": "2025-09-16", "album": "Hidden", "directory": "DCIM/100APPLE", "expect": "Hidden/2025/09 September" },
+  { "pattern": "{year}-{month}-{day}", "date": "2024-02-29", "album": "", "directory": "DCIM/100APPLE", "expect": "2024-02-29" },
+  { "pattern": "{folder}/{album}", "date": "2025-01-05", "album": "Trips/2025", "directory": "DCIM/104APPLE", "expect": "104APPLE/Trips-2025" },
+  { "pattern": "../{year}//./x", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "2023/x" },
+  { "pattern": "{album}", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "Photos" },
+  { "pattern": "", "date": "2023-07-01", "album": "A", "directory": "DCIM/100APPLE", "expect": "" }
+]

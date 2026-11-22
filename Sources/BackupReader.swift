@@ -10,7 +10,12 @@ struct DataGroup: Identifiable {
     var rows: [[String]] = []
     /// Backup file ids, one per row, when the rows are files that can be copied out.
     var fileIDs: [String] = []
+    /// Chats: files attached to a row (photos, videos, documents), as places in the backup.
+    var media: [Int: [BackupFileRef]] = [:]
 }
+
+/// One file inside a backup, by the domain and path the device gave it.
+struct BackupFileRef: Equatable { let domain: String; let path: String; var name: String { (path as NSString).lastPathComponent } }
 
 struct BackupData {
     var groups: [DataGroup] = []
@@ -297,9 +302,10 @@ final class BackupReader {
         let archive = db.columns("message").contains("attributedBody") ? "m.attributedBody" : "NULL"
         var groups: [DataGroup] = []
         var index: [Int64: Int] = [:]
+        var place: [Int64: (Int, Int)] = [:]   // message → (conversation, row), for attachments
         db.each("""
             SELECT c.ROWID, COALESCE(c.display_name,''), COALESCE(c.chat_identifier,''), m.date, m.is_from_me, COALESCE(h.id,''),
-                   m.text, \(archive), COALESCE(m.cache_has_attachments, 0)
+                   m.text, \(archive), COALESCE(m.cache_has_attachments, 0), m.ROWID
             FROM chat_message_join j JOIN message m ON m.ROWID = j.message_id JOIN chat c ON c.ROWID = j.chat_id
             LEFT JOIN handle h ON h.ROWID = m.handle_id ORDER BY m.date
             """) { s in
@@ -315,6 +321,16 @@ final class BackupReader {
             if body.isEmpty { body = sqlite3_column_int(s, 8) != 0 ? "(attachment)" : "(no text)" }
             let from = sqlite3_column_int(s, 4) != 0 ? "Me" : who(SQLiteFile.text(s, 5))
             groups[index[chat]!].rows.append([BackupReader.date(sqlite3_column_double(s, 3)), from, body])
+            place[sqlite3_column_int64(s, 9)] = (index[chat]!, groups[index[chat]!].rows.count - 1)
+        }
+        // Attachments live in MediaDomain under the path the message gives ("~/Library/SMS/Attachments/…").
+        if db.columns("attachment").contains("filename"), !db.columns("message_attachment_join").isEmpty {
+            db.each("SELECT j.message_id, COALESCE(a.filename,'') FROM message_attachment_join j JOIN attachment a ON a.ROWID = j.attachment_id") { s in
+                guard let (g, r) = place[sqlite3_column_int64(s, 0)] else { return }
+                var path = SQLiteFile.text(s, 1)
+                if path.hasPrefix("~/") { path.removeFirst(2) } else if let i = path.range(of: "/Library/SMS/") { path = String(path[path.index(after: i.lowerBound)...]) }
+                if !path.isEmpty { groups[g].media[r, default: []].append(BackupFileRef(domain: "MediaDomain", path: path)) }
+            }
         }
         return BackupData(groups: BackupReader.newestFirst(groups))
     }
@@ -332,8 +348,13 @@ final class BackupReader {
             groups.append(DataGroup(id: Int(sqlite3_column_int64(s, 0)), title: SQLiteFile.text(s, 1).isEmpty ? number : SQLiteFile.text(s, 1),
                                     subtitle: jid.hasSuffix("@g.us") ? "Group" : number, columns: ["Date", "From", "Message"]))
         }
-        let push = db.columns("ZWAMESSAGE").contains("ZPUSHNAME") ? "COALESCE(ZPUSHNAME,'')" : "''"
-        db.each("SELECT ZCHATSESSION, ZMESSAGEDATE, ZISFROMME, COALESCE(ZFROMJID,''), ZTEXT, \(push) FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE") { s in
+        let msgCols = db.columns("ZWAMESSAGE")
+        let push = msgCols.contains("ZPUSHNAME") ? "COALESCE(ZPUSHNAME,'')" : "''"
+        // Photos, videos and documents: the media item's path, under Message/ in WhatsApp's shared group.
+        let hasMedia = msgCols.contains("ZMEDIAITEM") && db.columns("ZWAMEDIAITEM").contains("ZMEDIALOCALPATH")
+        let mediaCol = hasMedia ? "COALESCE((SELECT ZMEDIALOCALPATH FROM ZWAMEDIAITEM WHERE Z_PK = ZWAMESSAGE.ZMEDIAITEM),'')" : "''"
+        let waDomain = "AppDomainGroup-group.net.whatsapp.WhatsApp.shared"
+        db.each("SELECT ZCHATSESSION, ZMESSAGEDATE, ZISFROMME, COALESCE(ZFROMJID,''), ZTEXT, \(push), \(mediaCol) FROM ZWAMESSAGE ORDER BY ZMESSAGEDATE") { s in
             guard let g = index[sqlite3_column_int64(s, 0)] else { return }
             let text = SQLiteFile.text(s, 4)
             var from = "Me"
@@ -342,6 +363,8 @@ final class BackupReader {
                 from = groups[g].subtitle == "Group" ? (pushName.isEmpty ? "Member" : pushName) : groups[g].title
             }
             groups[g].rows.append([BackupReader.date(sqlite3_column_double(s, 1)), from, text.isEmpty ? "(photo, video or other attachment)" : text])
+            let media = SQLiteFile.text(s, 6)
+            if !media.isEmpty { groups[g].media[groups[g].rows.count - 1] = [BackupFileRef(domain: waDomain, path: "Message/" + (media.hasPrefix("/") ? String(media.dropFirst()) : media))] }
         }
         return BackupData(groups: BackupReader.newestFirst(groups.filter { !$0.rows.isEmpty }))
     }
@@ -469,6 +492,63 @@ final class BackupReader {
             if let source = plain(group.fileIDs[r]), (try? FileManager.default.copyItem(at: source, to: dest)) != nil { written.append(dest) }
         }
         return written
+    }
+
+    /// A conversation as a web page anyone can open: a folder holding index.html and the attachments that are in the backup.
+    /// Returns the page, or nil if nothing could be written. Never overwrites.
+    func webPage(_ group: DataGroup, title kindTitle: String, into folder: URL) -> URL? {
+        let fm = FileManager.default
+        let safe = group.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+        let preferred = folder.appendingPathComponent("\(safe) (\(kindTitle))")
+        let dir = fm.fileExists(atPath: preferred.path) ? Exporter.uniqueURL(for: preferred) : preferred
+        let files = dir.appendingPathComponent("attachments", isDirectory: true)
+        guard (try? fm.createDirectory(at: files, withIntermediateDirectories: true)) != nil else { return nil }
+        func esc(_ t: String) -> String {
+            t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;")
+                .replacingOccurrences(of: "\"", with: "&quot;").replacingOccurrences(of: "\n", with: "<br>")
+        }
+        var used = Set<String>(), body = ""
+        for (r, row) in group.rows.enumerated() {
+            let mine = row[1] == "Me"
+            var extras = ""
+            for ref in group.media[r] ?? [] {
+                guard let id = fileID(domain: ref.domain, path: ref.path), let src = plain(id) else { extras += "<div class=\"missing\">Attachment not in this backup: \(esc(ref.name))</div>"; continue }
+                var name = ref.name, n = 2
+                while used.contains(name.lowercased()) { name = "\((ref.name as NSString).deletingPathExtension) (\(n)).\((ref.name as NSString).pathExtension)"; n += 1 }
+                used.insert(name.lowercased())
+                guard (try? fm.copyItem(at: src, to: files.appendingPathComponent(name))) != nil else { continue }
+                let link = "attachments/" + (name.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? name)
+                switch (name as NSString).pathExtension.lowercased() {
+                case "jpg", "jpeg", "png", "gif", "heic", "webp": extras += "<a href=\"\(link)\"><img src=\"\(link)\" alt=\"\(esc(name))\"></a>"
+                case "mov", "mp4", "m4v": extras += "<video controls src=\"\(link)\"></video>"
+                default: extras += "<a class=\"file\" href=\"\(link)\">\(esc(name))</a>"
+                }
+            }
+            let text = (row[2].hasPrefix("(") && row[2].hasSuffix(")") && !extras.isEmpty) ? "" : esc(row[2])
+            body += "<div class=\"msg\(mine ? " me" : "")\"><div class=\"meta\">\(esc(row[1])) · \(esc(row[0]))</div>\(text.isEmpty ? "" : "<div class=\"text\">\(text)</div>")\(extras)</div>\n"
+        }
+        let html = """
+        <!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>\(esc(group.title))</title>
+        <style>
+        :root { color-scheme: light dark; --me: #0a84ff; --them: #e9e9eb; --themText: #000; }
+        @media (prefers-color-scheme: dark) { :root { --them: #2c2c2e; --themText: #fff; } }
+        body { font: 15px/1.4 -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 760px; margin: 0 auto; padding: 24px 16px; }
+        h1 { font-size: 22px; margin: 0 0 4px; } .sub { opacity: .6; margin-bottom: 20px; }
+        .msg { max-width: 75%; margin: 8px 0; } .msg.me { margin-left: auto; text-align: right; }
+        .meta { font-size: 12px; opacity: .55; margin: 0 8px 2px; }
+        .text { display: inline-block; text-align: left; padding: 8px 12px; border-radius: 18px; background: var(--them); color: var(--themText); white-space: normal; overflow-wrap: anywhere; }
+        .me .text { background: var(--me); color: #fff; }
+        img, video { display: block; max-width: 320px; max-height: 320px; border-radius: 14px; margin: 4px 0 0 auto; } .msg:not(.me) img, .msg:not(.me) video { margin-left: 0; }
+        .file, .missing { display: inline-block; padding: 6px 10px; border-radius: 10px; background: var(--them); color: var(--themText); margin-top: 4px; font-size: 13px; }
+        .missing { opacity: .6; }
+        </style></head><body>
+        <h1>\(esc(group.title))</h1><div class="sub">\(esc(kindTitle)) · \(group.rows.count) messages · saved by PortHop from a device backup</div>
+        \(body)</body></html>
+        """
+        let page = dir.appendingPathComponent("index.html")
+        guard (try? html.write(to: page, atomically: true, encoding: .utf8)) != nil else { return nil }
+        if (try? fm.contentsOfDirectory(atPath: files.path))?.isEmpty == true { try? fm.removeItem(at: files) }
+        return page
     }
 
     static func csv(_ group: DataGroup) -> String {

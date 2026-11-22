@@ -51,5 +51,13 @@ c.execute("INSERT INTO ZADDITIONALASSETATTRIBUTES VALUES(101,101,'IMG_9001.MOV',
 src=f"{root}/DCIM/100APPLE/IMG_0001.JPG"; open(f"{root}/DCIM/100APPLE/we\"ird name.JPG","wb").write(open(src,"rb").read())
 c.execute("INSERT INTO ZASSET VALUES(102,'UUID-0102','DCIM/100APPLE','we\"ird name.JPG',1,0,0,0,0,777000000,1200,900,0,0,0)")
 c.execute("INSERT INTO ZADDITIONALASSETATTRIBUTES VALUES(102,102,'we\"ird name.JPG',?)",(os.path.getsize(src),))
+# Photos edits and iCloud: IMG_0002 was edited (its render is on the device), IMG_0003 was edited but its render
+# is missing (the original is used), IMG_9000 is in iCloud only, IMG_0001 is in iCloud and also on the device.
+for col in ("ZHASADJUSTMENTS INT", "ZCLOUDASSETGUID TEXT", "ZCLOUDLOCALSTATE INT"): c.execute("ALTER TABLE ZASSET ADD COLUMN "+col)
+c.execute("UPDATE ZASSET SET ZHASADJUSTMENTS=1 WHERE ZFILENAME IN ('IMG_0002.JPG','IMG_0003.JPG')")
+c.execute("UPDATE ZASSET SET ZCLOUDASSETGUID='G100', ZCLOUDLOCALSTATE=0 WHERE Z_PK=100")
+c.execute("UPDATE ZASSET SET ZCLOUDASSETGUID='G1', ZCLOUDLOCALSTATE=1 WHERE ZFILENAME='IMG_0001.JPG'")
+adj=f"{root}/PhotoData/Mutations/DCIM/100APPLE/IMG_0002/Adjustments"; os.makedirs(adj)
+open(adj+"/FullSizeRender.jpg","wb").write(open(f"{root}/DCIM/100APPLE/IMG_0001.JPG","rb").read()+b"EDITED")
 db.commit()
 PY

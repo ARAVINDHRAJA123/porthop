@@ -16,7 +16,12 @@ T = 780000000  # seconds since 2001
 def sms(db):
     db.executescript("""CREATE TABLE message(ROWID INTEGER PRIMARY KEY, text TEXT, handle_id INT, date INT, is_from_me INT, attributedBody BLOB, cache_has_attachments INT);
     CREATE TABLE handle(ROWID INTEGER PRIMARY KEY, id TEXT); CREATE TABLE chat(ROWID INTEGER PRIMARY KEY, chat_identifier TEXT, display_name TEXT);
-    CREATE TABLE chat_message_join(chat_id INT, message_id INT);""")
+    CREATE TABLE chat_message_join(chat_id INT, message_id INT);
+    CREATE TABLE attachment(ROWID INTEGER PRIMARY KEY, filename TEXT, mime_type TEXT, transfer_name TEXT);
+    CREATE TABLE message_attachment_join(message_id INT, attachment_id INT);""")
+    # Message 5 (no text) carries a photo, kept in the backup under MediaDomain.
+    db.execute("INSERT INTO attachment VALUES(1,'~/Library/SMS/Attachments/ab/12/GUID-1/IMG_5001.jpeg','image/jpeg','IMG_5001.jpeg')")
+    db.execute("INSERT INTO message_attachment_join VALUES(5,1)")
     db.execute("INSERT INTO handle VALUES(1,'+14155550101')"); db.execute("INSERT INTO handle VALUES(2,'sam@example.com')")
     db.execute("INSERT INTO chat VALUES(1,'+14155550101','')"); db.execute("INSERT INTO chat VALUES(2,'chat99','Weekend Trip')")
     long = "Long one " + "x" * 300
@@ -48,10 +53,12 @@ def history(db):
     db.executescript("CREATE TABLE history_items(id INTEGER PRIMARY KEY, url TEXT); CREATE TABLE history_visits(id INTEGER PRIMARY KEY, history_item INT, visit_time REAL, title TEXT);")
     db.execute("INSERT INTO history_items VALUES(1,'https://example.org/a')"); db.executemany("INSERT INTO history_visits VALUES(?,?,?,?)", [(1, 1, T, "Page A"), (2, 1, T + 50, "Page A")])
 def wa(db):
-    db.executescript("CREATE TABLE ZWACHATSESSION(Z_PK INTEGER PRIMARY KEY, ZPARTNERNAME TEXT, ZCONTACTJID TEXT); CREATE TABLE ZWAMESSAGE(Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INT, ZMESSAGEDATE REAL, ZISFROMME INT, ZFROMJID TEXT, ZTEXT TEXT, ZPUSHNAME TEXT);")
+    db.executescript("CREATE TABLE ZWACHATSESSION(Z_PK INTEGER PRIMARY KEY, ZPARTNERNAME TEXT, ZCONTACTJID TEXT); CREATE TABLE ZWAMESSAGE(Z_PK INTEGER PRIMARY KEY, ZCHATSESSION INT, ZMESSAGEDATE REAL, ZISFROMME INT, ZFROMJID TEXT, ZTEXT TEXT, ZPUSHNAME TEXT, ZMEDIAITEM INT);"
+                     "CREATE TABLE ZWAMEDIAITEM(Z_PK INTEGER PRIMARY KEY, ZMEDIALOCALPATH TEXT, ZTITLE TEXT);")
+    db.execute("INSERT INTO ZWAMEDIAITEM VALUES(1,'Media/123-456@g.us/1/2/photo1.jpg',NULL)")
     db.executemany("INSERT INTO ZWACHATSESSION VALUES(?,?,?)", [(1, "Asha", "14155550101@s.whatsapp.net"), (2, "Family", "123-456@g.us"), (3, "Empty", "1@s.whatsapp.net")])
-    db.executemany("INSERT INTO ZWAMESSAGE VALUES(?,?,?,?,?,?,?)", [(1, 1, T, 0, "14155550101@s.whatsapp.net", "Lunch?", None), (2, 1, T + 5, 1, None, "Yes", None),
-                   (3, 2, T + 900, 0, "123-456@g.us", "Dinner at 8", "Uncle Ravi"), (4, 2, T + 950, 0, "123-456@g.us", None, "Uncle Ravi")])
+    db.executemany("INSERT INTO ZWAMESSAGE VALUES(?,?,?,?,?,?,?,?)", [(1, 1, T, 0, "14155550101@s.whatsapp.net", "Lunch?", None, None), (2, 1, T + 5, 1, None, "Yes", None, None),
+                   (3, 2, T + 900, 0, "123-456@g.us", "Dinner at 8", "Uncle Ravi", None), (4, 2, T + 950, 0, "123-456@g.us", None, "Uncle Ravi", 1)])
 store("HomeDomain", "Library/SMS/sms.db", sms)
 store("HomeDomain", "Library/AddressBook/AddressBook.sqlitedb", contacts)
 store("AppDomainGroup-group.com.apple.notes", "NoteStore.sqlite", notes)
@@ -59,6 +66,8 @@ store("HomeDomain", "Library/Calendar/Calendar.sqlitedb", cal)
 store("HomeDomain", "Library/Safari/Bookmarks.db", bookmarks)
 store("AppDomain-com.apple.mobilesafari", "Library/Safari/History.db", history)
 if not os.environ.get("NO_WHATSAPP"): store("AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ChatStorage.sqlite", wa)
+store("MediaDomain", "Library/SMS/Attachments/ab/12/GUID-1/IMG_5001.jpeg", data=b"\xff\xd8\xffsms-photo" * 50)
+if not os.environ.get("NO_WHATSAPP"): store("AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "Message/Media/123-456@g.us/1/2/photo1.jpg", data=b"\xff\xd8\xffwa-photo" * 50)
 store("CameraRollDomain", "Media/DCIM/100APPLE/IMG_0001.JPG", data=b"jpegbytes" * 100)
 store("AppDomain-com.example.player", "Documents/movie list.txt", data=b"one\ntwo\n")
 m = sqlite3.connect(os.path.join(root, "Manifest.db"))

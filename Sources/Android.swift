@@ -118,6 +118,34 @@ enum Android {
         return (model, d)
     }
 
+    /// A folder of photos or videos as Android's media index (MediaStore) sees it: Camera, Screenshots, WhatsApp Images…
+    struct MediaAlbum: Equatable { let name: String; let path: String; let count: Int; let bytes: Int64 }
+
+    /// Every folder holding photos or videos, from MediaStore, biggest first. Empty if the index can't be read.
+    static func mediaAlbums(_ device: Device, tools: Tools) -> [MediaAlbum] {
+        guard let out = shell("content query --uri content://media/external/file --projection _data:_size --where 'media_type=1 OR media_type=3'",
+                              device: device, tools: tools, timeout: 60) else { return [] }
+        return parseMediaAlbums(out)
+    }
+
+    static func parseMediaAlbums(_ out: String) -> [MediaAlbum] {
+        var byDir: [String: (Int, Int64)] = [:]
+        for line in out.split(whereSeparator: \.isNewline) where line.hasPrefix("Row:") {
+            guard let d = line.range(of: "_data=") else { continue }
+            let rest = line[d.upperBound...]
+            let sizeRange = rest.range(of: ", _size=")
+            var path = String(sizeRange.map { rest[..<$0.lowerBound] } ?? rest)
+            let size = sizeRange.flatMap { Int64(rest[$0.upperBound...].prefix { $0.isNumber }) } ?? 0
+            for prefix in ["/storage/emulated/0", "/sdcard"] where path.hasPrefix(prefix + "/") { path = storageRoot + path.dropFirst(prefix.count) }
+            guard path.hasPrefix(storageRoot + "/") else { continue }   // SD cards and other volumes: not browsable here
+            let dir = (path as NSString).deletingLastPathComponent
+            let cur = byDir[dir] ?? (0, 0)
+            byDir[dir] = (cur.0 + 1, cur.1 + size)
+        }
+        return byDir.map { MediaAlbum(name: ($0.key as NSString).lastPathComponent, path: $0.key, count: $0.value.0, bytes: $0.value.1) }
+            .sorted { $0.count != $1.count ? $0.count > $1.count : $0.name < $1.name }
+    }
+
     static func list(_ dir: String, device: Device, tools: Tools) -> [AFCFileEntry] {
         // The trailing slash makes ls follow /sdcard, which is a link on most phones.
         guard let out = shell("ls -la \(sh(dir.hasSuffix("/") ? dir : dir + "/"))", device: device, tools: tools, timeout: 60) else { return [] }

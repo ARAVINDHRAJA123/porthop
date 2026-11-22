@@ -37,6 +37,14 @@ if cmd == "shell":
         d = real(shlex.split(line)[1])
         if os.path.exists(d): sys.exit(1)
         os.mkdir(d); print("made")
+    elif line.startswith("content query --uri content://media/external/file"):
+        # MediaStore: one row per photo or video, with its path as the phone sees it and its size.
+        n = 0
+        for dirpath, _, files in sorted(os.walk(root)):
+            for f in sorted(files):
+                if f.lower().rsplit(".", 1)[-1] in ("jpg", "jpeg", "png", "heic", "mp4", "mov"):
+                    p = os.path.join(dirpath, f)
+                    print("Row: %d _data=/storage/emulated/0%s, _size=%d" % (n, p[len(root):], os.path.getsize(p))); n += 1
     elif line.startswith("input "): pass
     else: sys.exit(1)
 elif cmd == "pull":

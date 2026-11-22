@@ -23,6 +23,16 @@ Copying again into the same folder is safe: files with the same name and exact s
 | ![A copy hopping to a folder](screenshots/2-hopping.png) | ![Inside a group, with its timeline](screenshots/3-group.png) |
 | ![Ask PortHop understanding a request](screenshots/4-ask.png) | ![Backups, and what can be read from them](screenshots/5-backups.png) |
 
+## Copy options
+
+- **Edited versions:** turn on *Copy edited versions* to get photos and videos as edited in the Photos app (the edit iOS keeps on the device); anything without an edit comes out as the original.
+- **iCloud-only items:** before copying, PortHop says how many items are stored only in iCloud ("Optimise Storage"), since those can't be copied over USB.
+- **Folder patterns:** besides one folder, by month or by device folder, *Custom pattern* arranges copies with `{year} {month} {monthName} {day} {album} {folder}`, e.g. `{album}/{year}/{month} {monthName}`.
+- **One-click hops:** save a copy of a whole group to a folder as a hop. It shows on the home screen, and running it again copies only what's new.
+- **HEIC to JPEG** works on both editions; on Windows it uses Microsoft's free *HEIF Image Extensions*.
+- **Chats as web pages:** in Messages and WhatsApp, *Save as Web Page* writes the conversation as a page any browser opens, with the photos, videos and files that are in the backup copied next to it.
+- **Android albums:** Android phones also show their photo folders from the phone's media index (Camera, Screenshots, WhatsApp Images…) with counts and sizes.
+
 ## External drives
 
 Any drive the Mac can write to works (APFS, Mac OS Extended, exFAT, FAT32): pen drives, SSDs, hard disks. They show up as one-click destinations. FAT32 cannot hold files over 4 GB; the app warns before copying. NTFS drives are read-only on macOS and are shown as such.
@@ -60,10 +70,9 @@ Password-protected (encrypted) backups are supported: the app asks for the backu
 
 ## What it does not do (yet)
 
-- It copies each photo's **original file**. Edits made in the Photos app are not applied.
 - Live Photos export as the still image unless **Include Live Photo videos** is on.
 - Originals stored only in iCloud are reported as not copied.
-- Wi-Fi setup is not implemented.
+- Wi-Fi: phones on the same Wi-Fi can be included from the ⋯ menu (*Also find phones on Wi-Fi*). It is off by default because reading a whole library over Wi-Fi is much slower than USB.
 
 ## Windows edition
 
@@ -84,6 +93,18 @@ The app reads the device's internal `PhotoData/Photos.sqlite`, which Apple does 
 Runs on Apple Silicon Macs with macOS 13 or later. Not notarized: on another Mac, right-click → Open the first time.
 
 PortHop is released under the MIT licence (see `LICENSE`). The bundled open-source tools keep their own licences (GPL, LGPL, Apache); each app carries them, with a `SOURCES.txt` naming the exact source used.
+
+## Signing, notarizing and the Windows installer
+
+- `distribution/sign_and_notarize.sh` signs the Mac app with a Developer ID, sends it to Apple for notarization and staples the result, so it opens on any Mac without the "unidentified developer" warning. It needs a paid Apple Developer account; the script lists the one-time setup.
+- `windows/installer/PortHop.iss` turns the Windows build into `PortHop-Setup.exe` (Start menu entry, uninstaller, no admin rights needed). Build it on Windows with the free Inno Setup 6.
+- Neither has been run yet: they need an Apple Developer ID and a Windows PC.
+
+## Working on the code
+
+- `swift build` (or opening this folder in Xcode) builds and indexes the Mac app incrementally; `./build.sh` still makes the finished `PortHop.app`.
+- `Tests/golden` holds test cases shared by both editions (Ask PortHop requests, folder patterns); `Tests/run_tests.sh` and `windows/npm test` both run them, so the Mac and Windows code can't quietly drift apart.
+- The Mac sources are split by job: `Models`, `Device`, `Catalog`, `Exporter`, `Thumbnails`, `Volumes`, `Backup`, `Ask` for the engine, and one file per screen for the interface. The Windows page is split the same way under `windows/renderer/`.
 
 ## Publishing a release
 

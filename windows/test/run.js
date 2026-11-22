@@ -30,6 +30,15 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   const go = (dest, options = {}, job = new Job(), extra = {}) => exportAssets({ assets: hidden, dest: path.join(T, dest), options, device: dev, tools, job, ...extra });
   let r = await go('out1'); check('first export', r.copied === 38 && r.skipped === 0 && r.failures.length === 1, s(r));
   r = await go('out1'); check('run again', r.copied === 0 && r.skipped === 38 && r.failures.length === 1, s(r));
+  check('edited and iCloud-only flags', hidden.filter((a) => a.isEdited).map((a) => a.filename).sort().join() === 'IMG_0002.JPG,IMG_0003.JPG'
+    && hidden.filter((a) => a.isCloudOnly).map((a) => a.filename).join() === 'IMG_9000.HEIC');
+  r = await go('edited', { editedVersions: true });
+  check('edited versions', r.copied === 38 && fs.readFileSync(path.join(T, 'edited', 'IMG_0002.jpg')).subarray(-6).toString() === 'EDITED'
+    && fs.existsSync(path.join(T, 'edited', 'IMG_0003.JPG')), s(r));
+  r = await go('pattern', { subfolder: 'custom', folderPattern: '{album}/{year}/{month} {monthName}', albumName: 'Hidden' });
+  const years = fs.readdirSync(path.join(T, 'pattern', 'Hidden'));
+  const months = fs.readdirSync(path.join(T, 'pattern', 'Hidden', years[0]));
+  check('custom folder pattern', r.copied === 38 && years.every((y) => /^\d{4}$/.test(y)) && months.some((m) => /^\d\d [A-Z][a-z]+$/.test(m)), years.join() + ' ' + months.join());
   fs.rmSync(path.join(T, 'out1', '.iPhoneAlbumExtractor-manifest.json'));
   r = await go('out1'); check('adopt earlier export', r.copied === 1 && r.skipped === 37 && r.failures.length === 1, s(r));
   r = await go('out2', { includeLiveVideo: true, subfolder: 'yearMonth', useOriginalNames: true });
@@ -72,6 +81,10 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   const top = await android.list('/sdcard', ad, tools), cam = await android.list('/sdcard/DCIM/Camera', ad, tools);
   check('android listing', top.map((e) => e.name).join() === 'DCIM,Download,Pictures' && cam.length === 1 && cam[0].name === 'PXL 0001.jpg' && cam[0].size === fileSize(local)
     && (await android.list("/sdcard/Pictures/It's here", ad, tools)).length === 1, JSON.stringify(cam));
+  const ma = await android.mediaAlbums(ad, tools);
+  check('android albums from MediaStore', ma.map((x) => x.path).sort().join('|') === "/sdcard/DCIM/Camera|/sdcard/Pictures/It's here"
+    && ma.every((x) => x.count === 1 && x.bytes === fileSize(local))
+    && android.parseMediaAlbums('Row: 0 _data=/storage/1234-ABCD/DCIM/x.jpg, _size=5\nRow: 1 _data=/sdcard/Movies/a, b.mp4, _size=9').map((x) => x.name).join() === 'Movies', JSON.stringify(ma));
   const a1 = await android.pull(cam[0], path.join(T, 'pulled.jpg'), ad, tools), a2 = await android.pull(cam[0], path.join(T, 'pulled.jpg'), ad, tools);
   const dn = new Set();
   const s1 = await android.push(local, '/sdcard/Download', dn, ad, tools), s2 = await android.push(local, '/sdcard/Download', dn, ad, tools);
