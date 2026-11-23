@@ -206,3 +206,56 @@ cd windows && npm test
 # Full cross-platform release bundle (Mac + Windows + Sources)
 python3 make_release.py
 ```
+
+---
+
+## 6. Competitive Analysis (November 2026)
+
+PortHop sits where five kinds of tools overlap. Each group has one or two leaders worth beating.
+
+| Group | Leaders | What they do best | Where they fall short |
+| :--- | :--- | :--- | :--- |
+| **All-in-one iPhone managers** | iMazing 3 (Mac/Win), AnyTrans, Dr.Fone/MobileTrans, Tenorshare, EaseUS MobiMover, Syncios, WinX MediaTrans | iMazing: scheduled Wi-Fi backups with snapshot retention (iMazing Mini), Messages/WhatsApp export to PDF/Excel for legal use, file search across device and backups (3.5), screen recording, spyware analyzer (MVT indicators), Configurator. AnyTrans: phone switcher, iCloud manager, LINE/Viber. WinX: auto-import on connect. | iMazing is subscription-only since June 2025 and its Android support is still "coming". The vendor suites draw constant complaints about billing and cancellation, devices not detected, clutter and upsells, and "backup said complete but wasn't". |
+| **Photo transfer** | CopyTrans Photo/Studio (Win), Image Capture (Mac), Windows Photos/Explorer import, Apple Devices (Win), PhotoSync, osxphotos | CopyTrans: albums both ways, HEIC→JPEG, Live Photos. PhotoSync: wireless auto-transfer to computers and NAS. osxphotos: the best folder/file templates, XMP/JSON sidecars, people and album keywords (Mac Photos library only). | Image Capture silently misses iCloud-optimised items and, since macOS 15.4, the locked Hidden album; counts don't match the library. Windows import fails on videos and drops HEIC; Apple Devices can't copy photos off the phone; Phone Link has no iPhone photos. CopyTrans is Windows-only and sold per app. |
+| **Android ↔ computer** | OpenMTP, MacDroid, LocalSend, Syncthing, KDE Connect | OpenMTP: free MTP on Mac. MacDroid: Finder mount, Wi-Fi (Pro). LocalSend: one-off wireless sends. Syncthing: continuous sync. | Android File Transfer is abandoned; MTP tools see folders, not albums; two-way copying is a paid tier in MacDroid. None of them also handles iPhones. |
+| **Backup readers** | Reincubate iPhone Backup Extractor, iBackup Viewer, imessage-exporter, iLEAPP, MVT | Reincubate: photos, messages, notes, contacts, calendars, voice memos, call history and WhatsApp out of a backup, as PDF/vCard/iCal. imessage-exporter: free HTML export with attachments, encrypted backups. iLEAPP: hundreds of forensic artefacts. | Most are paid or command-line only. None is part of a transfer app, so people juggle three tools. |
+| **Device health** | 3uTools, coconutBattery | Battery cycles/health, a parts "verification report". | 3uTools' figures are disputed and it is a jailbreak toolkit; coconutBattery is Mac-only. |
+
+**Where PortHop already leads:** free and open source with no account, subscription, upsell or telemetry; one app for iPhone, iPad and Android on both Mac and Windows; reads the phone's own Photos library, so Hidden, Favourites, Screenshots, Selfies and the person's own albums come across as they are; iCloud-only items are counted before copying (Image Capture silently skips them); edited versions; HEIC→JPEG on both systems; Ask PortHop ("hidden videos from 2024 to T7"), which no competitor has; incremental hops with a manifest shared by both apps; saved hops; folder patterns; a backup reader for plain and encrypted backups with chats as web pages.
+
+**How PortHop one-ups each leader (Phase 6):**
+
+| Area | Best today | PortHop answer |
+| :--- | :--- | :--- |
+| Automatic copying | WinX auto-import, PhotoSync Autotransfer (paid), iMazing Mini (paid) | Saved hops can run by themselves whenever the phone is plugged in. They copy only what is new and post a notification. |
+| Organising | osxphotos templates (Mac library only) | File-name patterns alongside folder patterns, new `{device}`, `{kind}`, `{hour}`, `{minute}`, `{second}`, `{name}` tokens, and **People albums** read from the phone's own face recognition ("photos of Mum from 2024 to T7"). |
+| Trust | Nobody: the top complaint is "it said done but files were missing" | A copy report (CSV) saved with every copy: copied, already there, only in iCloud, failed, each with a reason. |
+| Privacy | iOS share sheet's location switch | "Remove location from copies": GPS is wiped in place from JPEG, HEIC and MOV/MP4, with no re-encoding and no quality loss. |
+| Backups | iMazing Mini (paid) | Automatic backup when plugged in, at most once a day. On the Mac each backup keeps dated snapshots made with APFS clones, so they take almost no extra space. |
+| Backup data | Reincubate (paid), iMazing | Full note text (decoded from Notes' compressed format), contacts as vCard, calendars as .ics, voice memos, photos and videos recovered from a backup, every chat as PDF or web page in one go. |
+| Android | MacDroid Wi-Fi (paid) | Wireless debugging pairing built in (pair code + connect). |
+| Power users | iMazing CLI (business tier), osxphotos | A `porthop` command line on Mac and Windows that uses the same engine. |
+| Windows setup | Vendor support scripts | A clear banner when Apple's iPhone driver is missing, with a button to the Microsoft Store page. |
+
+**Deliberately not yet (Phase 7, needs real hardware or new download sources):** a spyware/IOC check (needs indicator downloads), screen mirroring/recording (needs the developer disk image on iOS 17+, scrcpy on Android), iPhone→Android direct hops, music and ringtones (needs the iTunes media database protocol), parts verification (needs Apple server data), installing/removing apps, delete-after-copy (needs the camera protocol so the Photos library stays consistent), Wi-Fi backups, Sparkle delta updates (needs Developer ID signing and a hosted feed).
+
+## 7. Phase 5 & 6 Build List
+
+| # | Item | Mac | Windows |
+| :--- | :--- | :--- | :--- |
+| 5.1 | Update check against GitHub Releases (instead of Sparkle, which needs Developer ID + a hosted feed) | Done | Done |
+| 5.2 | Legacy `iPhoneAlbumExtractor`/`PAE` names → PortHop names, old ones still read | Done | Done |
+| 5.3 | Version 2.1.0, README, installer (a universal Intel build is not done: `build_tools.py` builds the bundled tools for arm64 only) | Done | Done |
+| 5.4 | Leftovers: preload unsubscribe, async staging size, Photos.sqlite WAL retry, Apple driver banner, DateFormatter (thread-safe since macOS 10.9 — no change needed) | Done | Done |
+| 5.5 | Split `Manager.swift` and `Shores.swift` | Done (Manager → 4 files, Shores → 3) | n/a |
+| 6.1 | Hops that run when the phone is plugged in + notification | Done | Done |
+| 6.2 | File-name patterns and new tokens | Done | Done |
+| 6.3 | People albums + Ask PortHop "of <name>" | Done | Done |
+| 6.4 | Copy report (CSV) | Done | Done |
+| 6.5 | Remove location from copies (JPEG, HEIC, MOV/MP4, lossless) | Done (checked on real Apple-written JPEG, HEIC, MOV) | Done |
+| 6.6 | Automatic daily backup; Mac APFS-clone snapshots | Done (auto + APFS snapshots) | Done (auto; no snapshots: NTFS has no clones) |
+| 6.7 | Backup data: note text, vCard, .ics, voice memos, photos from backups, PDF and all-chats export | Done | Done (PDF via Electron) |
+| 6.8 | Android wireless debugging pairing | Done | Done |
+| 6.9 | `porthop` command line | Done (`Contents/Helpers/porthop`) | Done (`porthop.cmd`) |
+
+**Still open after Phase 6:** real-device checks (Android, backups and restore, Windows on a real PC, the Notes and Voice Memos layouts on current iOS), Developer ID signing and notarization, building the Windows installer, an Intel/universal Mac build, and the Phase 7 items above. Not done on purpose: `.AAE` edit sidecars (where iOS puts them varies by version and needs a real device to confirm) and partial-hash duplicate checks (the manifest plus name-and-size matching already prevents false skips; hashing would mean reading every file twice over USB).

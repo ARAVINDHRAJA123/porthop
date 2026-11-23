@@ -21,11 +21,13 @@ final class DeviceManager: ObservableObject {
     @Published private(set) var devices: [Device] = []
     @Published private(set) var deviceNames: [String: String] = [:]
     private var preferredUDID: String?
-    private(set) var tools: Tools?
+    var tools: Tools?
 
     // Catalog
     @Published var smartAlbums: [AlbumCategory] = []
     @Published var userAlbums: [AlbumCategory] = []
+    /// People named in the Photos app, each a group like an album.
+    @Published var peopleAlbums: [AlbumCategory] = []
     @Published var catalogWarnings: [String] = []
     @Published var schemaLabel = ""
     @Published var apps: [AppInfo] = []
@@ -55,38 +57,38 @@ final class DeviceManager: ObservableObject {
     @Published var isStopping = false
     @Published var progress = ExportProgress()
     @Published var summary: ExportSummary?
-    private var job: ExportJob?
+    var job: ExportJob?
 
     // File browser (media area or one app's shared folder)
-    @Published private(set) var afcApp: String?
-    @Published private(set) var afcRoot = "/"
+    @Published var afcApp: String?
+    @Published var afcRoot = "/"
     @Published var afcPath = "/"
-    @Published private(set) var afcEntries: [AFCFileEntry] = []
-    @Published private(set) var afcGeneration = 0
+    @Published var afcEntries: [AFCFileEntry] = []
+    @Published var afcGeneration = 0
     @Published var afcSelection: Set<String> = []
     @Published var afcLoading = false
     @Published var afcBusy = false { didSet { updateAwake() } }
     @Published var afcMessage = ""
     @Published var afcMessageIsError = false
-    private var transferJob: ExportJob?
-    private var browseToken = 0
+    var transferJob: ExportJob?
+    var browseToken = 0
 
     // Backups
     @Published var backupFolder: URL = {
-        if uiTestBuild, let test = ProcessInfo.processInfo.environment["IPHONE_BACKUP_DIR"] { return URL(fileURLWithPath: test) }
+        if uiTestBuild, let test = testEnv("BACKUP_DIR") { return URL(fileURLWithPath: test) }
         if let saved = UserDefaults.standard.string(forKey: "backupFolder")
             ?? UserDefaults(suiteName: "com.local.iPhoneAlbumExtractor.v2")?.string(forKey: "backupFolder") { return URL(fileURLWithPath: saved) }
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("iPhone Backups")
     }() { didSet { UserDefaults.standard.set(backupFolder.path, forKey: "backupFolder"); refreshBackups() } }
-    @Published private(set) var backups: [BackupEntry] = []
-    @Published private(set) var backupRunning = false { didSet { updateAwake() } }
-    @Published private(set) var backupStopping = false
-    @Published private(set) var backupPercent: Double? = nil
-    @Published private(set) var backupPhase = ""
-    @Published private(set) var backupStarted: Date? = nil
+    @Published var backups: [BackupEntry] = []
+    @Published var backupRunning = false { didSet { updateAwake() } }
+    @Published var backupStopping = false
+    @Published var backupPercent: Double? = nil
+    @Published var backupPhase = ""
+    @Published var backupStarted: Date? = nil
     @Published var backupMessage = ""
     @Published var backupFailed = false
-    private var backupJob: ExportJob?
+    var backupJob: ExportJob?
 
     // Data read out of a backup
     @Published var dataKind: BackupKind?
@@ -100,7 +102,7 @@ final class DeviceManager: ObservableObject {
     @Published var dataMessage = ""
     var dataReader: BackupReader?
     /// Kept in memory for this run only; never saved.
-    var dataPassword: String? = uiTestBuild ? ProcessInfo.processInfo.environment["IPHONE_BACKUP_PASSWORD"] : nil
+    var dataPassword: String? = uiTestBuild ? testEnv("BACKUP_PASSWORD") : nil
     @Published var dataNeedsPassword = false
     @Published var dataPasswordWrong = false
     @Published var dataUnlocking = false
@@ -142,8 +144,9 @@ final class DeviceManager: ObservableObject {
     }
     var currentAlbum: AlbumCategory? {
         guard let id = selection else { return nil }
-        return smartAlbums.first { $0.id == id } ?? userAlbums.first { $0.id == id }
+        return allAlbums.first { $0.id == id }
     }
+    var allAlbums: [AlbumCategory] { smartAlbums + userAlbums + peopleAlbums }
     var currentApp: AppInfo? { afcApp.flatMap { id in apps.first { $0.id == id } } }
     var selectedAssets: [PhotoAsset] { visibleAssets.filter { selectedIDs.contains($0.id) } }
 
@@ -213,6 +216,7 @@ final class DeviceManager: ObservableObject {
     func start() {
         BackupReader.purgeTemp()
         connect(silent: false)
+        checkForUpdatesIfDue()
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
@@ -262,7 +266,8 @@ final class DeviceManager: ObservableObject {
     private func reset(to newPhase: Phase) {
         androidAlbums = []
         device = nil
-        smartAlbums = []; userAlbums = []; catalogWarnings = []; apps = []
+        smartAlbums = []; userAlbums = []; peopleAlbums = []; catalogWarnings = []; apps = []
+        if newPhase == .noDevice { autoRanFor = nil; autoBackupRanFor = nil; autoQueue = [] }
         selectedIDs.removeAll()
         afcEntries = []; afcPath = "/"; afcGeneration += 1
         previewAsset = nil
@@ -305,7 +310,7 @@ final class DeviceManager: ObservableObject {
                     self.device = device
                     self.devices = found
                     self.deviceNames = foundNames.merging([device.udid: info.name]) { _, new in new }
-                    self.smartAlbums = []; self.userAlbums = []; self.catalogWarnings = []; self.apps = []
+                    self.smartAlbums = []; self.userAlbums = []; self.peopleAlbums = []; self.catalogWarnings = []; self.apps = []
                     self.selectedIDs.removeAll()
                     self.refilter()
                     self.restartingSince = nil; self.phase = .ready
@@ -330,7 +335,7 @@ final class DeviceManager: ObservableObject {
                 self.phase = .loading("Reading the photo library from \(info.name)…")
             }
 
-            let temp = FileManager.default.temporaryDirectory.appendingPathComponent("iPhoneAlbumExtractor2-db-\(UUID().uuidString)", isDirectory: true)
+            let temp = FileManager.default.temporaryDirectory.appendingPathComponent("PortHop-db-\(UUID().uuidString)", isDirectory: true)
             try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
             defer { try? FileManager.default.removeItem(at: temp) }
             var cmds = ""
@@ -346,7 +351,15 @@ final class DeviceManager: ObservableObject {
                 return
             }
             await MainActor.run { self.phase = .loading("Organising albums…") }
-            let result = CatalogReader.load(path: dbURL.path)
+            var result = CatalogReader.load(path: dbURL.path)
+            if case .failure = result {
+                // A journal caught half-written while the phone was busy can make the copy unreadable: read it without the journal.
+                for f in ["Photos.sqlite-wal", "Photos.sqlite-shm"] { try? FileManager.default.removeItem(at: temp.appendingPathComponent(f)) }
+                if case .success(var cat) = CatalogReader.load(path: dbURL.path) {
+                    cat.warnings.append("The last few minutes of changes on the phone could not be read. Choose Refresh to read them.")
+                    result = .success(cat)
+                }
+            }
 
             await self.finish {
                 switch result {
@@ -356,6 +369,7 @@ final class DeviceManager: ObservableObject {
                     self.deviceNames = foundNames.merging([device.udid: info.name]) { _, new in new }
                     self.smartAlbums = cat.smart
                     self.userAlbums = cat.user
+                    self.peopleAlbums = cat.people
                     self.catalogWarnings = cat.warnings
                     self.schemaLabel = cat.schemaLabel
                     self.selectedIDs.removeAll()
@@ -364,6 +378,7 @@ final class DeviceManager: ObservableObject {
                     self.restartingSince = nil; self.phase = .ready
                     self.loadApps(device: device, tools: tools)
                     self.runLaunchAction()
+                    self.runAutoHops()
                 case .failure(.unreadable):
                     self.phase = .catalogError("The photo database was copied from the device but could not be opened. Try Refresh with the device unlocked.")
                 case .failure(.unsupported(let why)):
@@ -387,9 +402,9 @@ final class DeviceManager: ObservableObject {
         }
     }
 
-    /// Developer aid for checking the interface without clicking: IPHONE_UI_TEST=sheet | preview | export:<folder> | select:<id>
+    /// Developer aid for checking the interface without clicking: PORTHOP_UI_TEST=sheet | preview | export:<folder> | select:<id>
     private func runLaunchAction() {
-        guard uiTestBuild, let action = ProcessInfo.processInfo.environment["IPHONE_UI_TEST"], !didRunLaunchAction else { return }
+        guard uiTestBuild, let action = testEnv("UI_TEST"), !didRunLaunchAction else { return }
         didRunLaunchAction = true
         if action == "sheet" { requestExport(selectedOnly: false) }
         else if action == "preview" { previewAsset = visibleAssets.first }
@@ -398,13 +413,13 @@ final class DeviceManager: ObservableObject {
         else if action.hasPrefix("power:") { power(String(action.dropFirst(6))) }
         else if action.hasPrefix("hop:") {
             let parts = action.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2, let album = (smartAlbums + userAlbums).first(where: { $0.id == parts[0] }) {
+            if parts.count == 2, let album = allAlbums.first(where: { $0.id == parts[0] }) {
                 startExport(album.assets, to: URL(fileURLWithPath: parts[1]))
             }
         }
         else if action.hasPrefix("ask:") {   // the copy sheet for one group to a folder, as when it is dropped there
             let parts = action.dropFirst(4).split(separator: ":", maxSplits: 1).map(String.init)
-            if parts.count == 2, let album = (smartAlbums + userAlbums).first(where: { $0.id == parts[0] }) {
+            if parts.count == 2, let album = allAlbums.first(where: { $0.id == parts[0] }) {
                 options.subfolder = .custom; options.folderPattern = "{album}/{year}/{month} {monthName}"
                 requestHop(album, to: URL(fileURLWithPath: parts[1]))
             }
@@ -466,7 +481,7 @@ final class DeviceManager: ObservableObject {
         else if let app { if selection == "app:\(app)" { selectionChanged() } else { selection = "app:\(app)" } }
     }
 
-    private func runPendingUploads() {
+    func runPendingUploads() {
         guard !pendingUploads.isEmpty else { return }
         let urls = pendingUploads
         pendingUploads = []
@@ -499,6 +514,9 @@ final class DeviceManager: ObservableObject {
         progress = p
         var opts = override ?? options
         opts.albumName = albumName ?? currentAlbum?.title ?? ""
+        opts.deviceName = deviceName
+        let auto = autoHopRunning
+        autoHopRunning = nil
         var lastEmit = Date.distantPast
         Task.detached {
             let result = Exporter.run(assets: assets, destination: destination, options: opts, device: device, tools: tools, job: job) { p in
@@ -511,7 +529,17 @@ final class DeviceManager: ObservableObject {
                 self.isExporting = false
                 self.isStopping = false
                 self.job = nil
-                self.summary = result
+                // A hop that ran by itself reports with a notification; its sheet only opens when something went wrong.
+                if let auto {
+                    if !result.failures.isEmpty || result.fatalError != nil || result.disconnected || result.stalled { self.summary = result }
+                    if result.copied > 0 || !result.failures.isEmpty {
+                        Notify.post(result.failures.isEmpty ? "Copied \(Fmt.count(result.copied)) new item\(result.copied == 1 ? "" : "s")" : "\(auto) needs a look",
+                                    result.failures.isEmpty ? "\(auto) · \(destination.lastPathComponent)"
+                                                            : "\(Fmt.count(result.copied)) copied, \(Fmt.count(result.failures.count)) could not be copied.")
+                    }
+                } else {
+                    self.summary = result
+                }
                 self.exportDestination = nil
                 if result.copied > 0 {
                     let f = DateFormatter()
@@ -520,391 +548,31 @@ final class DeviceManager: ObservableObject {
                     self.lastHop = "\(Fmt.count(result.copied)) item\(result.copied == 1 ? "" : "s") to \(destination.lastPathComponent) · \(f.string(from: Date()))"
                     UserDefaults.standard.set(self.lastHop, forKey: "lastHop")
                 }
-                if result.isClean { NSSound(named: "Glass")?.play() }
+                if result.isClean && (auto == nil || result.copied > 0) { NSSound(named: "Glass")?.play() }
+                if auto != nil { self.runNextAutoHop() }
             }
         }
     }
 
-    // MARK: Saved hops
-
-    /// A copy saved for one click: a whole group to a folder, with its options. Running it again copies only what is new.
-    struct HopPreset: Codable, Identifiable, Equatable {
-        var id = UUID()
-        var name: String
-        var albumID: String
-        var destination: String
-        var editedVersions = false
-        var convertHEIC = false
-        var includeLiveVideo = false
-        var useOriginalNames = false
-        var subfolder = SubfolderMode.flat.rawValue
-        var folderPattern = "{year}/{month}"
-    }
+    // MARK: State used by the extensions (ManagerHops, ManagerDevice, ManagerFiles)
 
     @Published var presets: [HopPreset] = (try? JSONDecoder().decode([HopPreset].self, from: UserDefaults.standard.data(forKey: "hopPresets") ?? Data())) ?? []
-
-    private func savePresets() { UserDefaults.standard.set(try? JSONEncoder().encode(presets), forKey: "hopPresets") }
-
-    func savePreset(name: String, albumID: String, destination: URL, options o: ExportOptions) {
-        presets.removeAll { $0.albumID == albumID && $0.destination == destination.path }
-        presets.append(HopPreset(name: name, albumID: albumID, destination: destination.path, editedVersions: o.editedVersions,
-                                 convertHEIC: o.convertHEIC, includeLiveVideo: o.includeLiveVideo, useOriginalNames: o.useOriginalNames,
-                                 subfolder: o.subfolder.rawValue, folderPattern: o.folderPattern))
-        savePresets()
-    }
-
-    func deletePreset(_ p: HopPreset) { presets.removeAll { $0.id == p.id }; savePresets() }
-
-    /// The group a saved hop copies, on the device connected now (nil if it has no such group).
-    func album(for p: HopPreset) -> AlbumCategory? { (smartAlbums + userAlbums).first { $0.id == p.albumID } }
-
-    func runPreset(_ p: HopPreset) {
-        guard let album = album(for: p), !album.assets.isEmpty else { return }
-        var o = ExportOptions()
-        o.skipExisting = true
-        o.editedVersions = p.editedVersions; o.convertHEIC = p.convertHEIC; o.includeLiveVideo = p.includeLiveVideo
-        o.useOriginalNames = p.useOriginalNames; o.subfolder = SubfolderMode(rawValue: p.subfolder) ?? .flat; o.folderPattern = p.folderPattern
-        startExport(album.assets, to: URL(fileURLWithPath: p.destination), albumName: album.title, options: o)
-    }
-
-    func stopExport() {
-        isStopping = true
-        job?.cancel()
-    }
-
-    func retryFailed(_ summary: ExportSummary) {
-        let assets = summary.failures.map(\.asset)
-        self.summary = nil
-        startExport(assets, to: summary.destination)
-    }
-
-    func shutdown() {
-        dataReader = nil
-        BackupReader.purgeTemp()
-        job?.cancel()
-        transferJob?.cancel()
-        backupJob?.cancel()
-        ThumbnailLoader.purgeDiskCache()
-    }
-
-    // MARK: Android setup
-
+    var autoQueue: [HopPreset] = []
+    /// The device whose automatic hops already ran since it was plugged in.
+    var autoRanFor: String?
+    var autoBackupRanFor: String?
+    /// The name of the automatic hop being copied now.
+    var autoHopRunning: String?
+    /// A newer release on GitHub, shown as a badge in the toolbar.
+    @Published var update: Updates.Release?
+    @Published var checkingUpdates = false
+    @Published var wirelessMessage = ""
+    @Published var wirelessBusy = false
     @Published var androidSetupMessage = ""
     @Published var androidSettingUp = false
-
-    /// Downloads Google's Android tool on request (it may not be shipped inside other apps).
-    func setUpAndroid() {
-        guard !androidSettingUp else { return }
-        androidSettingUp = true
-        androidSetupMessage = "Downloading from Google…"
-        Task {
-            let problem = await Android.setUp()
-            androidSettingUp = false
-            androidSetupMessage = problem ?? "Android support is ready. Turn on USB debugging on the phone and plug it in."
-            if problem == nil { tools = Tools.locate(); connect(silent: true) }
-        }
-    }
-
-    // MARK: Power
-
     /// Set when the device was told to restart, so the app says so instead of asking to connect a device.
     @Published var restartingSince: Date?
-    var isRestarting: Bool { restartingSince.map { Date().timeIntervalSince($0) < 600 } ?? false }
-
-    private var awakeToken: NSObjectProtocol?
-    /// Keeps the Mac from sleeping while a copy, backup or restore runs.
-    private func updateAwake() {
-        let busy = isExporting || afcBusy || backupRunning
-        if busy, awakeToken == nil {
-            awakeToken = ProcessInfo.processInfo.beginActivity(options: .userInitiated, reason: "Copying between this Mac and a device")
-        } else if !busy, let token = awakeToken {
-            ProcessInfo.processInfo.endActivity(token)
-            awakeToken = nil
-        }
-    }
-
+    var awakeToken: NSObjectProtocol?
     @Published var powerMessage = ""
-
-    func power(_ action: String) {
-        guard let device, let tools, !isExporting, !afcBusy, !backupRunning else { return }
-        powerMessage = action == "restart" ? "Asking the \(deviceKind) to restart…" : "Putting the \(deviceKind) to sleep…"
-        let kind = deviceKind
-        Task.detached {
-            let ok = device.isAndroid ? Android.power(action, device: device, tools: tools) : AFC.power(action, device: device, tools: tools)
-            await MainActor.run {
-                if ok && action == "restart" { self.restartingSince = Date() }
-                self.powerMessage = ok ? (action == "restart" ? "The \(kind) is restarting. It will reappear here when it is back." : "The \(kind) is asleep.")
-                                       : "The \(kind) did not accept the request. Unlock it and try again."
-            }
-        }
-    }
-
-    // MARK: Backups
-
-    func refreshBackups() {
-        let folder = backupFolder
-        Task.detached(priority: .utility) {
-            let list = Backup.existing(in: folder)
-            await MainActor.run { if self.backupFolder == folder { self.backups = list } }
-        }
-    }
-
-    func startBackup() {
-        guard let device, let tools, !device.isAndroid, !backupRunning, !isExporting, !afcBusy else { return }
-        let job = ExportJob()
-        backupJob = job
-        backupRunning = true
-        backupStopping = false
-        backupPercent = nil
-        backupPhase = "Starting… enter the passcode on the \(deviceKind) if it asks."
-        backupStarted = Date()
-        backupMessage = ""
-        let folder = backupFolder
-        var last = Date.distantPast
-        Task.detached {
-            let problem = Backup.run(device: device, tools: tools, folder: folder, job: job) { percent, phase in
-                let now = Date()
-                if now.timeIntervalSince(last) < 0.25 { return }
-                last = now
-                Task { @MainActor in
-                    guard self.backupRunning else { return }
-                    if let percent { self.backupPercent = percent }
-                    self.backupPhase = phase
-                }
-            }
-            await MainActor.run {
-                self.backupRunning = false
-                self.backupStopping = false
-                self.backupJob = nil
-                self.backupFailed = problem != nil
-                self.backupMessage = problem ?? "Backup complete."
-                if problem == nil { NSSound(named: "Glass")?.play() }
-                self.refreshBackups()
-            }
-        }
-    }
-
-    @Published private(set) var restoring = false
-
-    /// Replaces the connected device's settings and app data with a backup. Only called after the user confirms.
-    func startRestore(_ entry: BackupEntry, password: String?) {
-        guard let device, let tools, !device.isAndroid, !backupRunning, !isExporting, !afcBusy else { return }
-        let job = ExportJob()
-        backupJob = job
-        backupRunning = true
-        restoring = true
-        backupStopping = false
-        backupPercent = nil
-        backupPhase = "Starting the restore… enter the passcode on the \(deviceKind) if it asks."
-        backupStarted = Date()
-        backupMessage = ""
-        let kind = deviceKind
-        var last = Date.distantPast
-        Task.detached {
-            let problem = Backup.restore(entry, to: device, tools: tools, password: password, job: job) { percent, phase in
-                let now = Date()
-                if now.timeIntervalSince(last) < 0.25 { return }
-                last = now
-                Task { @MainActor in
-                    guard self.backupRunning else { return }
-                    if let percent { self.backupPercent = percent }
-                    self.backupPhase = phase
-                }
-            }
-            await MainActor.run {
-                self.backupRunning = false
-                self.restoring = false
-                self.backupStopping = false
-                self.backupJob = nil
-                self.backupFailed = problem != nil
-                if problem == nil { self.restartingSince = Date() }
-                self.backupMessage = problem ?? "Restore complete. The \(kind) is restarting and will reappear here when it is back."
-                if problem == nil { NSSound(named: "Glass")?.play() }
-            }
-        }
-    }
-
-    func stopBackup() {
-        backupStopping = true
-        backupJob?.cancel()
-    }
-
-    // MARK: File browser
-
-    private func openBrowser(app: String?) {
-        guard let device, let tools else { return }
-        afcApp = app
-        afcRoot = device.isAndroid ? Android.storageRoot : "/"
-        afcPath = afcRoot
-        afcEntries = []
-        afcGeneration += 1
-        afcSelection.removeAll()
-        afcMessage = ""
-        afcLoading = true
-        browseToken += 1
-        let token = browseToken
-        Task.detached {
-            var root = device.isAndroid ? Android.storageRoot : "/"
-            var entries = DeviceManager.listDir(root, app: app, device: device, tools: tools)
-            // An app's shared area is a "Documents" folder inside its container; start there.
-            if app != nil, entries.contains(where: { $0.isDirectory && $0.name == "Documents" }) {
-                root = "/Documents"
-                entries = AFC.list(root, app: app, device: device, tools: tools)
-            }
-            let finalRoot = root, finalEntries = entries
-            await MainActor.run {
-                guard token == self.browseToken else { return }
-                self.afcRoot = finalRoot
-                self.afcPath = finalRoot
-                self.afcEntries = finalEntries
-                self.afcGeneration += 1
-                self.afcLoading = false
-                self.runPendingUploads()
-            }
-        }
-    }
-
-    func browse(_ path: String, keepMessage: Bool = false) {
-        guard let device, let tools else { return }
-        afcLoading = true
-        browseToken += 1
-        let token = browseToken
-        let app = afcApp
-        Task.detached {
-            let entries = DeviceManager.listDir(path, app: app, device: device, tools: tools)
-            await MainActor.run {
-                guard token == self.browseToken else { return }
-                self.afcPath = path
-                self.afcEntries = entries
-                self.afcGeneration += 1
-                self.afcSelection.removeAll()
-                self.afcLoading = false
-                if !keepMessage { self.afcMessage = "" }
-                self.runPendingUploads()
-            }
-        }
-    }
-
-    var canBrowseUp: Bool { afcPath != afcRoot && afcPath != "/" }
-
-    func browseUp() {
-        guard canBrowseUp else { return }
-        let parent = (afcPath as NSString).deletingLastPathComponent
-        browse(parent.isEmpty ? "/" : parent)
-    }
-
-    func stopTransfer() { transferJob?.cancel() }
-
-    /// Device → Mac for the selected files and folders.
-    func downloadAFCSelection(to folder: URL) {
-        download(afcEntries.filter { afcSelection.contains($0.path) }, app: afcApp, to: folder)
-    }
-
-    /// Device → Mac for files and folders, never overwriting. Used by the file browser and by Android folder hops.
-    func download(_ chosen: [AFCFileEntry], app: String?, to folder: URL) {
-        guard let device, let tools, !chosen.isEmpty, !afcBusy else { return }
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let job = ExportJob()
-        transferJob = job
-        afcBusy = true
-        afcMessageIsError = false
-        afcMessage = "Copying \(chosen.count) item\(chosen.count == 1 ? "" : "s") to your Mac…"
-        Task.detached {
-            var saved: [URL] = []
-            var reserved = Set<String>()
-            for (i, entry) in chosen.enumerated() {
-                if job.isCancelled { break }
-                await MainActor.run { self.afcMessage = "Copying \(i + 1) of \(chosen.count) to your Mac: \(entry.name)" }
-                let remote = entry.path.hasPrefix("/") ? String(entry.path.dropFirst()) : entry.path
-                var dest = folder.appendingPathComponent(entry.name)
-                if FileManager.default.fileExists(atPath: dest.path) || reserved.contains(dest.path) {
-                    dest = Exporter.uniqueURL(for: dest, avoiding: reserved)
-                }
-                reserved.insert(dest.path)
-                if device.isAndroid {
-                    _ = Android.pull(entry.path, to: dest, device: device, tools: tools, onStart: { job.track($0) })
-                } else {
-                    let args = device.baseArgs + AFC.container(app) + ["--", "get"] + (entry.isDirectory ? ["-r"] : []) + [remote, dest.path]
-                    _ = Shell.run(tools.afc, args, onStart: { job.track($0) })
-                }
-                job.clear()
-                let ok = FileManager.default.fileExists(atPath: dest.path) && (entry.isDirectory || entry.size <= 0 || AFC.fileSize(dest) == entry.size)
-                if ok && !job.isCancelled { saved.append(dest) } else if !entry.isDirectory { try? FileManager.default.removeItem(at: dest) }
-            }
-            let done = saved
-            let cancelled = job.isCancelled
-            await MainActor.run {
-                self.afcBusy = false
-                self.transferJob = nil
-                let missed = chosen.count - done.count
-                self.afcMessageIsError = missed > 0 && !cancelled
-                self.afcMessage = cancelled ? "Stopped. \(done.count) of \(chosen.count) copied."
-                    : (missed == 0 ? "Copied \(done.count) item\(done.count == 1 ? "" : "s") to “\(folder.lastPathComponent)”."
-                                   : "Copied \(done.count) of \(chosen.count). \(missed) could not be copied.")
-                if !done.isEmpty { NSWorkspace.shared.activateFileViewerSelecting(done) }
-            }
-        }
-    }
-
-    /// Mac → device: adds files or folders to the folder being shown (apps' shared folders only).
-    func upload(_ urls: [URL]) {
-        guard let device, let tools, canAddFiles, !urls.isEmpty, !afcBusy else { return }
-        let app = afcApp
-        let dir = afcPath
-        let names = Set(afcEntries.map(\.name))
-        let job = ExportJob()
-        transferJob = job
-        afcBusy = true
-        afcMessageIsError = false
-        let android = device.isAndroid
-        let target = android ? "“\((afcPath as NSString).lastPathComponent)”" : (currentApp?.name ?? "the app")
-        let kind = deviceKind
-        afcMessage = "Adding \(urls.count) item\(urls.count == 1 ? "" : "s") to \(target)…"
-        Task.detached {
-            var existing = names
-            var added = 0
-            for (i, url) in urls.enumerated() {
-                if job.isCancelled { break }
-                await MainActor.run { self.afcMessage = "Adding \(i + 1) of \(urls.count) to \(target): \(url.lastPathComponent)" }
-                let ok = android ? Android.push(url, intoDir: dir, existing: &existing, device: device, tools: tools, onStart: { job.track($0) })
-                                 : AFC.put(url, intoDir: dir, existing: &existing, app: app, device: device, tools: tools, onStart: { job.track($0) })
-                if ok { added += 1 }
-                job.clear()
-            }
-            let after = DeviceManager.listDir(dir, app: app, device: device, tools: tools)
-            let total = added
-            let cancelled = job.isCancelled
-            await MainActor.run {
-                self.afcBusy = false
-                self.transferJob = nil
-                if self.afcApp == app, self.afcPath == dir {
-                    self.afcEntries = after
-                    self.afcGeneration += 1
-                }
-                let missed = urls.count - total
-                self.afcMessageIsError = missed > 0 && !cancelled
-                self.afcMessage = cancelled ? "Stopped. \(total) of \(urls.count) added."
-                    : (missed == 0 ? "Added \(total) item\(total == 1 ? "" : "s") to \(target)." + (android ? "" : " Open the app on the \(kind) to see \(total == 1 ? "it" : "them").")
-                                   : "Added \(total) of \(urls.count). \(missed) could not be added.")
-                if missed == 0 && !cancelled { NSSound(named: "Glass")?.play() }
-            }
-        }
-    }
-
-    func newFolder(named name: String) {
-        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines).replacingOccurrences(of: "/", with: "-")
-        guard let device, let tools, canAddFiles, !clean.isEmpty, !afcBusy else { return }
-        let app = afcApp
-        let path = afcPath == "/" ? "/\(clean)" : "\(afcPath)/\(clean)"
-        let dir = afcPath
-        afcLoading = true
-        Task.detached {
-            let ok = device.isAndroid ? Android.mkdir(path, device: device, tools: tools) : AFC.mkdir(path, app: app, device: device, tools: tools)
-            await MainActor.run {
-                self.afcMessageIsError = !ok
-                self.afcMessage = ok ? "Created “\(clean)”." : "The folder could not be created."
-                self.browse(dir, keepMessage: true)
-            }
-        }
-    }
+    @Published var restoring = false
 }

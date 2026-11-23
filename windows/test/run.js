@@ -3,7 +3,7 @@
 const fs = require('node:fs'), path = require('node:path'), os = require('node:os');
 const { execFileSync } = require('node:child_process');
 const macTests = path.join(__dirname, '..', '..', 'Tests');
-const T = fs.mkdtempSync(path.join(os.tmpdir(), 'pae-test-'));
+const T = fs.mkdtempSync(path.join(os.tmpdir(), 'porthop-test-'));
 process.env.PHONE_TOOLS_DIR = path.join(macTests, 'fake-tools');
 process.env.FAKE_PHONE = path.join(T, 'phone');
 execFileSync(path.join(macTests, 'make_fake_phone.sh'), [process.env.FAKE_PHONE], { stdio: 'ignore' });
@@ -39,7 +39,17 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   const years = fs.readdirSync(path.join(T, 'pattern', 'Hidden'));
   const months = fs.readdirSync(path.join(T, 'pattern', 'Hidden', years[0]));
   check('custom folder pattern', r.copied === 38 && years.every((y) => /^\d{4}$/.test(y)) && months.some((m) => /^\d\d [A-Z][a-z]+$/.test(m)), years.join() + ' ' + months.join());
-  fs.rmSync(path.join(T, 'out1', '.iPhoneAlbumExtractor-manifest.json'));
+  check('people named in Photos become groups', JSON.stringify(cat.people.map((p) => [p.title, p.assets.length])) === '[["Mum",4],["Ravi Kumar",3]]' && cat.people[0].id === 'person:mum',
+    JSON.stringify(cat.people.map((p) => [p.title, p.assets.length])));
+  r = await go('named', { namePattern: '{year}-{month}-{day} {hour}.{minute}.{second}', removeLocation: true, albumName: 'Hidden', deviceName: 'Test Phone' });
+  const named = fs.readdirSync(path.join(T, 'named')).filter((f) => /^\d{4}-\d\d-\d\d \d\d\.\d\d\.\d\d( \(\d+\))?\.(JPG|MOV|HEIC)$/i.test(f));
+  const reports = fs.readdirSync(path.join(T, 'named', 'PortHop Reports'));
+  const csv = fs.readFileSync(path.join(T, 'named', 'PortHop Reports', reports[0]), 'utf8');
+  check('file-name pattern + copy report', r.copied === 38 && named.length === 38 && reports.length === 1 && csv.includes('Copied,38') && csv.includes('Only in iCloud,1')
+    && csv.includes('IMG_9000.HEIC') && !!r.reportPath, `${s(r)} ${named.length} ${reports.join()}`);
+  r = await go('named', { namePattern: '{year}-{month}-{day} {hour}.{minute}.{second}', albumName: 'Hidden' });
+  check('renamed copies are recognised next time', r.copied === 0 && r.skipped === 38 && fs.readdirSync(path.join(T, 'named', 'PortHop Reports')).length === 2, s(r));
+  fs.rmSync(path.join(T, 'out1', '.porthop-manifest.json'));
   r = await go('out1'); check('adopt earlier export', r.copied === 1 && r.skipped === 37 && r.failures.length === 1, s(r));
   r = await go('out2', { includeLiveVideo: true, subfolder: 'yearMonth', useOriginalNames: true });
   check('live photos + by month', r.copied === 38 && r.failures.length === 1 && r.liveVideos === 5, s(r));
@@ -69,6 +79,12 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   process.env.FAKE_DELAY = '0';
   check('stalled device is abandoned, not waited on', r.stalled && r.copied === 0 && r.elapsed < 12 && r.failures.length === 0, s(r));
 
+  // The porthop command line (cli.js), against the same simulated iPhone.
+  const cli = (...a) => { try { return { code: 0, out: execFileSync(process.execPath, [path.join(__dirname, '..', 'cli.js'), ...a], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }) }; } catch (e) { return { code: e.status, out: String(e.stdout || '') }; } };
+  const c1 = cli('devices', '--json'), c2 = cli('groups'), c3 = cli('copy', 'Hidden', path.join(T, 'cli-out'), '--pattern', '{year}/{month}', '--names', '{year}-{month}-{day} {hour}.{minute}.{second}');
+  const c4 = cli('copy', 'smart_hidden', path.join(T, 'cli-out'), '--pattern', '{year}/{month}', '--names', '{year}-{month}-{day} {hour}.{minute}.{second}', '--json'), c5 = cli('copy', 'No Such Album', path.join(T, 'cli-out'));
+  check('porthop command line', c1.out.includes('"kind": "ios"') && c2.out.includes('smart_hidden\tHidden\t39 items') && c2.out.includes('person:mum')
+    && c3.code === 1 && c3.out.includes("Copied 38, already there 0, couldn't copy 1") && c4.out.includes('"skipped": 38') && c5.code === 2, JSON.stringify([c1, c2.out.slice(0, 200), c3, c4.out.slice(0, 200), c5.code]));
   const droid = path.join(T, 'android');
   for (const d of ['DCIM/Camera', 'Download', "Pictures/It's here"]) fs.mkdirSync(path.join(droid, d), { recursive: true });
   fs.copyFileSync(local, path.join(droid, 'DCIM/Camera/PXL 0001.jpg')); fs.copyFileSync(local, path.join(droid, "Pictures/It's here/a.jpg"));
@@ -85,6 +101,10 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   check('android albums from MediaStore', ma.map((x) => x.path).sort().join('|') === "/sdcard/DCIM/Camera|/sdcard/Pictures/It's here"
     && ma.every((x) => x.count === 1 && x.bytes === fileSize(local))
     && android.parseMediaAlbums('Row: 0 _data=/storage/1234-ABCD/DCIM/x.jpg, _size=5\nRow: 1 _data=/sdcard/Movies/a, b.mp4, _size=9').map((x) => x.name).join() === 'Movies', JSON.stringify(ma));
+  const w1 = await android.wireless({ pair: '192.168.1.20:37001', code: '123 456', address: '192.168.1.20:41235' }, tools);
+  const w2 = await android.wireless({ pair: '192.168.1.20:37001', code: '111111', address: '192.168.1.20:41235' }, tools);
+  const w3 = await android.wireless({ address: '192.168.1.20:5555' }, tools), w4 = await android.wireless({ address: 'not an address; rm -rf' }, tools);
+  check('android wireless debugging pair and connect', w1 === null && /Pairing didn/.test(w2 || '') && /didn’t answer/.test(w3 || '') && /Enter the address/.test(w4 || ''), JSON.stringify([w1, w2, w3, w4]));
   const a1 = await android.pull(cam[0], path.join(T, 'pulled.jpg'), ad, tools), a2 = await android.pull(cam[0], path.join(T, 'pulled.jpg'), ad, tools);
   const dn = new Set();
   const s1 = await android.push(local, '/sdcard/Download', dn, ad, tools), s2 = await android.push(local, '/sdcard/Download', dn, ad, tools);

@@ -44,8 +44,9 @@ struct RootView: View {
             }
             ToolbarItem(placement: .principal) { AskField(m: m, text: $askText, focused: $askFocused) }
             ToolbarItemGroup(placement: .primaryAction) {
+                UpdateBadge(m: m)
                 ActivityBadge(m: m)
-                SettingsMenu()
+                SettingsMenu(m: m)
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -59,7 +60,7 @@ struct RootView: View {
         }
         .onAppear {
             m.start()
-            if uiTestBuild, let ask = ProcessInfo.processInfo.environment["IPHONE_UI_ASK"] {
+            if uiTestBuild, let ask = testEnv("UI_ASK") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 4) { askFocused = true; askText = ask }
             }
         }

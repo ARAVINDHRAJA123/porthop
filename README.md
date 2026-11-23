@@ -27,8 +27,13 @@ Copying again into the same folder is safe: files with the same name and exact s
 
 - **Edited versions:** turn on *Copy edited versions* to get photos and videos as edited in the Photos app (the edit iOS keeps on the device); anything without an edit comes out as the original.
 - **iCloud-only items:** before copying, PortHop says how many items are stored only in iCloud ("Optimise Storage"), since those can't be copied over USB.
-- **Folder patterns:** besides one folder, by month or by device folder, *Custom pattern* arranges copies with `{year} {month} {monthName} {day} {album} {folder}`, e.g. `{album}/{year}/{month} {monthName}`.
+- **Folder patterns:** besides one folder, by month or by device folder, *Custom pattern* arranges copies with `{year} {month} {monthName} {day} {hour} {minute} {second} {album} {folder} {device} {kind} {name}`, e.g. `{album}/{year}/{month} {monthName}`.
+- **File names:** *File names* renames the copies with the same tokens, e.g. `{year}-{month}-{day} {hour}.{minute}.{second}`, so photos from several phones sort by time and never clash. Shots taken in the same second get (2), (3)…
+- **People:** people you have named in the Photos app (from its own face recognition) appear as groups under *People*, and Ask PortHop understands them: "videos of Mum from 2024 to T7".
+- **Remove location:** *Remove location from the copies* wipes the GPS position from photos (JPEG, HEIC, DNG) and videos (MOV, MP4) as they land. It edits the metadata in place, so nothing is re-encoded and the picture and sound are untouched.
+- **Copy report:** every copy writes `PortHop Reports/<date> <group>.csv` in the destination: what was copied (and its new name), what couldn't be and why (including items only in iCloud). Items already there are counted, not listed, so repeat hops stay small. Turn it off under *More options*.
 - **One-click hops:** save a copy of a whole group to a folder as a hop. It shows on the home screen, and running it again copies only what's new.
+- **Hops that run by themselves:** a saved hop can *Run by itself when this iPhone is plugged in*. It runs once each time that phone connects (never for another phone), copies only what's new and posts a notification when done.
 - **HEIC to JPEG** works on both editions; on Windows it uses Microsoft's free *HEIF Image Extensions*.
 - **Chats as web pages:** in Messages and WhatsApp, *Save as Web Page* writes the conversation as a page any browser opens, with the photos, videos and files that are in the backup copied next to it.
 - **Android albums:** Android phones also show their photo folders from the phone's media index (Camera, Screenshots, WhatsApp Images…) with counts and sizes.
@@ -54,17 +59,19 @@ With an Android phone or tablet plugged in, the app shows its shared storage (Ca
 Two things are needed:
 
 - On the phone: turn on **USB debugging** (Settings ▸ About phone ▸ tap Build number seven times, then Settings ▸ Developer options ▸ USB debugging) and tap **Allow** when the Mac is first connected.
-- On the Mac: Google's `adb`. Its licence does not allow it to be shipped inside another app, so it is not bundled. Install it with `brew install android-platform-tools`, or unzip Google's platform-tools into `~/Library/Application Support/iPhoneAlbumExtractor/android/`.
+- On the Mac: Google's `adb`. Its licence does not allow it to be shipped inside another app, so *Set Up Android Support* downloads it from Google on request and checks Google's signature before using it (it lands in `~/Library/Application Support/PortHop/android/`). `brew install android-platform-tools` works too.
 
-Tested against a simulated phone only; not yet verified on a real Android device. There is no album view for Android yet, only folders.
+**Over Wi-Fi:** on Android 11 and later, *Connect an Android Phone over Wi-Fi…* pairs with the code from the phone's *Wireless debugging* screen (once), then connects; the phone then appears just like a plugged-in one.
+
+Tested against a simulated phone only; not yet verified on a real Android device.
 
 ## Backups (beta)
 
-**Backups** makes a standard full device backup (the format Finder uses) into a folder or external drive of your choice; later runs only copy changes. **Restore…** on a backup puts it back onto the connected device, replacing its settings and app data; it needs Find My turned off and asks for a typed confirmation first. Neither backup nor restore has been verified on a real device yet.
+**Backups** makes a standard full device backup (the format Finder uses) into a folder or external drive of your choice; later runs only copy changes. *Back up when plugged in, once a day* runs it by itself when the phone connects and has no backup from the last 20 hours (iOS asks for the passcode on the phone to start a backup). *Keep earlier versions* keeps the previous backup as a dated snapshot before each new one: on APFS drives it is a clone, so it takes almost no extra space; the newest 7 are kept and can be restored like any backup. **Restore…** on a backup puts it back onto the connected device, replacing its settings and app data; it needs Find My turned off and asks for a typed confirmation first. Neither backup nor restore has been verified on a real device yet.
 
 ## Reading a backup (beta)
 
-**From your backup** in the sidebar reads the newest backup in the backup folder without changing it: Messages and WhatsApp conversations, Contacts, Notes (title and opening lines), Calendar, Safari bookmarks and history, and every file in the backup (Backup Files), which can be copied out under its real name. Each list can be searched and saved as a spreadsheet (CSV) file.
+**From your backup** in the sidebar reads the newest backup in the backup folder without changing it: Messages and WhatsApp conversations, Contacts, Notes (the full text, decoded from Notes' compressed format; locked notes show their preview), Calendar, Safari bookmarks and history, Photos & Videos from the camera roll (useful when the phone itself is gone), Voice Memos, and every file in the backup (Backup Files), which can be copied out under its real name. Each list can be searched and saved as a spreadsheet (CSV) file; contacts also save as a vCard (.vcf) and calendars as an .ics file, which Contacts, Outlook, Gmail and Google Calendar import. Chats save as a web page, a paginated PDF, or every chat at once with an index page.
 
 Password-protected (encrypted) backups are supported: the app asks for the backup password, uses it in memory only and never saves it. Decrypted working copies go to a temporary folder that is removed when the app quits. Apple only puts the call log in encrypted backups, so Call Log is empty for plain ones. Photos and attachments inside conversations are shown as a placeholder. Tested against a simulated backup with invented data only; not yet verified on a real one.
 
@@ -79,6 +86,14 @@ Password-protected (encrypted) backups are supported: the app asks for the backu
 `windows/` holds a Windows edition with the same features and the same Shores layout, dressed in Material 3 Expressive: a colour scheme generated with Google's Material colour library, Google's Material Symbols icons in shape-morphing containers, a wavy progress bar and springy motion (an Electron app, so it can be built and tested from a Mac). See `windows/README.md`. It has been tested against simulated devices only, not yet on a real Windows PC.
 
 ![PortHop for Windows](screenshots/7-windows-shores.png)
+
+## Command line
+
+`porthop` drives the same engine from Terminal, for scripts and automation: `porthop devices`, `porthop groups`, `porthop copy <group> <folder> [--pattern …] [--names …] [--heic-to-jpeg] [--edited] [--live] [--no-location] [--json]` and `porthop backup <folder>`. A copy run again copies only what's new, and the exit code says whether everything made it. On the Mac it lives at `PortHop.app/Contents/Helpers/porthop` (⋯ ▸ *Command-Line Tool…* shows how to link it into your path); on Windows it is `porthop.cmd` next to `PortHop.exe`.
+
+## Updates
+
+⋯ ▸ *Check for Updates…* asks GitHub for the latest PortHop release and offers its download page when it is newer. By default PortHop checks by itself at most once a week; the request carries nothing about you or your devices, and ⋯ ▸ *Check for Updates Weekly* turns it off.
 
 ## iOS compatibility
 
@@ -103,8 +118,8 @@ PortHop is released under the MIT licence (see `LICENSE`). The bundled open-sour
 ## Working on the code
 
 - `swift build` (or opening this folder in Xcode) builds and indexes the Mac app incrementally; `./build.sh` still makes the finished `PortHop.app`.
-- `Tests/golden` holds test cases shared by both editions (Ask PortHop requests, folder patterns); `Tests/run_tests.sh` and `windows/npm test` both run them, so the Mac and Windows code can't quietly drift apart.
-- The Mac sources are split by job: `Models`, `Device`, `Catalog`, `Exporter`, `Thumbnails`, `Volumes`, `Backup`, `Ask` for the engine, and one file per screen for the interface. The Windows page is split the same way under `windows/renderer/`.
+- `Tests/golden` holds test cases shared by both editions (Ask PortHop requests, folder and file-name patterns, update versions, and small JPEG/HEIC/MOV files for location removal); `Tests/run_tests.sh` and `windows/npm test` both run them, so the Mac and Windows code can't quietly drift apart.
+- The Mac sources are split by job: `Models`, `Device`, `Catalog`, `Exporter`, `LocationScrubber`, `Thumbnails`, `Volumes`, `Backup`, `Ask`, `Updates` for the engine, `Manager` plus `ManagerHops`, `ManagerDevice` and `ManagerFiles` for app state, and one file per screen for the interface. `CLI/main.swift` is the command line. The Windows page is split the same way under `windows/renderer/`, with `windows/cli.js` as its command line.
 
 ## Publishing a release
 

@@ -15,11 +15,19 @@ struct BackupEntry: Identifiable {
     let date: Date?
     let encrypted: Bool
     let iosVersion: String
+    /// An earlier version kept by "Keep earlier versions" (see Backup.snapshot).
+    var isSnapshot = false
 }
 
 enum Backup {
+    static let snapshotsFolder = "PortHop Snapshots"
+
     static func existing(in folder: URL) -> [BackupEntry] {
-        let subs = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+        let fm = FileManager.default
+        func dirs(_ u: URL) -> [URL] { (try? fm.contentsOfDirectory(at: u, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? [] }
+        // Earlier versions live in "PortHop Snapshots/<device>/<date>/<device>", so a restore finds them like any backup.
+        let snapshots = Set(dirs(folder.appendingPathComponent(snapshotsFolder)).flatMap(dirs).flatMap(dirs).map(\.path))
+        let subs = dirs(folder) + snapshots.map { URL(fileURLWithPath: $0) }
         return subs.compactMap { dir -> BackupEntry? in
             guard let data = try? Data(contentsOf: dir.appendingPathComponent("Info.plist")),
                   let info = (try? PropertyListSerialization.propertyList(from: data, format: nil)) as? [String: Any] else { return nil }
@@ -30,9 +38,31 @@ enum Backup {
             }
             return BackupEntry(path: dir, deviceName: (info["Device Name"] as? String) ?? dir.lastPathComponent,
                                date: info["Last Backup Date"] as? Date, encrypted: encrypted,
-                               iosVersion: (info["Product Version"] as? String) ?? "")
+                               iosVersion: (info["Product Version"] as? String) ?? "", isSnapshot: snapshots.contains(dir.path))
         }
-        .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+        .sorted { a, b in a.date == b.date ? (!a.isSnapshot && b.isSnapshot) : (a.date ?? .distantPast) > (b.date ?? .distantPast) }
+    }
+
+    /// Before a new backup replaces the last one, keeps it as an earlier version. APFS clones it (copy-on-write), so a
+    /// snapshot takes almost no space; on drives without clones (exFAT, HFS+) no snapshot is made rather than a full copy.
+    /// Keeps the newest `keep` per device. Returns the snapshot, or nil.
+    @discardableResult
+    static func snapshot(udid: String, in folder: URL, keep: Int = 7) -> URL? {
+        let fm = FileManager.default
+        let current = folder.appendingPathComponent(udid)
+        guard fm.fileExists(atPath: current.appendingPathComponent("Manifest.db").path) else { return nil }
+        let info = (try? Data(contentsOf: current.appendingPathComponent("Info.plist")))
+            .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) } as? [String: Any]
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd HH.mm"
+        let parent = folder.appendingPathComponent(snapshotsFolder).appendingPathComponent(udid)
+        let stamp = parent.appendingPathComponent(f.string(from: info?["Last Backup Date"] as? Date ?? Date()))
+        let target = stamp.appendingPathComponent(udid)
+        if fm.fileExists(atPath: target.path) { return target }   // this version is already kept
+        guard (try? fm.createDirectory(at: stamp, withIntermediateDirectories: true)) != nil else { return nil }
+        guard clonefile(current.path, target.path, 0) == 0 else { try? fm.removeItem(at: stamp); return nil }
+        let all = ((try? fm.contentsOfDirectory(atPath: parent.path)) ?? []).filter { !$0.hasPrefix(".") }.sorted()
+        for old in all.dropLast(keep) { try? fm.removeItem(at: parent.appendingPathComponent(old)) }
+        return target
     }
 
     /// The most recent "NN% Finished" the tool printed, as 0…1.

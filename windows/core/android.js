@@ -21,6 +21,23 @@ async function findDevices(tools) {
   return out;
 }
 
+/// Wireless debugging (Android 11 and later). Pairing, needed once per computer, uses the address and six-digit code from
+/// "Pair device with pairing code"; connecting uses the address on the Wireless debugging screen. Returns null or a reason.
+async function wireless({ pair = '', code = '', address = '' }, tools) {
+  if (!tools.adb) return 'Set up Android support first.';
+  const valid = (a) => /^[A-Za-z0-9.\-\[\]:%]+:\d{2,5}$/.test(a);
+  const p = String(pair).trim(), c = String(code).replace(/\D/g, ''), a = String(address).trim();
+  if (p || String(code).trim()) {
+    if (!valid(p) || c.length !== 6) return 'Enter the pairing address (like 192.168.1.20:37001) and the six-digit code the phone shows.';
+    const r = await run(tools.adb, ['pair', p, c], { timeout: 30 });
+    if (!(r.output || '').includes('Successfully paired')) return 'Pairing didn’t work. Check the code: it changes every time the phone shows it.';
+  }
+  if (!valid(a)) return 'Enter the address shown on the phone’s Wireless debugging screen (like 192.168.1.20:41235).';
+  const out = ((await run(tools.adb, ['connect', a], { timeout: 30 })).output || '').toLowerCase();
+  if (!out.includes('connected to') || out.includes('failed') || out.includes('unable')) return `The phone didn’t answer at ${a}. Keep Wireless debugging on, with the phone and this computer on the same Wi-Fi.`;
+  return null;
+}
+
 async function shell(cmd, device, tools, timeout = 20) {
   const r = await run(tools.adb, [...args(device), 'shell', cmd], { timeout });
   return r.ok ? r.output.replace(/\r\n/g, '\n') : null;
@@ -134,4 +151,4 @@ function parseMediaAlbums(out) {
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-module.exports = { ROOT, mediaAlbums, parseMediaAlbums, findDevices, name, details, list, pull, push, mkdir, power };
+module.exports = { ROOT, mediaAlbums, parseMediaAlbums, findDevices, name, details, list, pull, push, mkdir, power, wireless };

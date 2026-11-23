@@ -1,0 +1,36 @@
+[
+ {
+  "file": "gps.jpg",
+  "gone": [
+   "PORTHOP-SECRET-PLACE"
+  ],
+  "kept": [
+   "KEEP-CAMERA-MAKE",
+   "KEEP-COMMENT",
+   "PIXELS"
+  ]
+ },
+ {
+  "file": "gps.heic",
+  "gone": [
+   "PORTHOP-SECRET-PLACE"
+  ],
+  "kept": [
+   "KEEP-CAMERA-MAKE",
+   "ftypheic"
+  ]
+ },
+ {
+  "file": "gps.mov",
+  "gone": [
+   "+12.3456",
+   "location.ISO6709",
+   "\u00a9xyz"
+  ],
+  "kept": [
+   "KEEP-PHONE-MAKER",
+   "VIDEO-BYTES",
+   "com.apple.quicktime.make"
+  ]
+ }
+]

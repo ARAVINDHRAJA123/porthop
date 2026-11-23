@@ -4,20 +4,57 @@ const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const { pipeline } = require('node:stream/promises');
 const { DatabaseSync } = require('node:sqlite');
 const plist = require('./plist');
 const { run, fileSize } = require('./shell');
 const ios = require('./ios');
 
-const TEMP_PREFIX = 'PhoneAlbumExtractor-bk-';
+const TEMP_PREFIX = 'PortHop-bk-', LEGACY_TEMP_PREFIX = 'PhoneAlbumExtractor-bk-';
 const pad = (n) => String(n).padStart(2, '0');
 
 const KINDS = {
   messages: { title: 'Messages', groupWord: 'conversations' }, whatsapp: { title: 'WhatsApp', groupWord: 'conversations' },
   contacts: { title: 'Contacts' }, notes: { title: 'Notes' }, calendar: { title: 'Calendar', groupWord: 'calendars' },
-  calls: { title: 'Call Log', needsEncrypted: true }, safari: { title: 'Safari', groupWord: 'lists' }, files: { title: 'Backup Files', groupWord: 'areas' },
+  calls: { title: 'Call Log', needsEncrypted: true }, safari: { title: 'Safari', groupWord: 'lists' },
+  photos: { title: 'Photos & Videos', groupWord: 'folders', files: true }, voiceMemos: { title: 'Voice Memos', files: true }, files: { title: 'Backup Files', groupWord: 'areas', files: true },
 };
+
+// Note text from ZICNOTEDATA.ZDATA: gzip-compressed protobuf, the text at NoteStoreProto.document(2).note(3).note_text(2).
+// Locked notes stay unreadable (they are encrypted on the device) and fall back to the short preview.
+function noteText(blob) {
+  let raw;
+  try { raw = blob[0] === 0x1f && blob[1] === 0x8b ? zlib.gunzipSync(blob) : blob[0] === 0x78 ? zlib.inflateSync(blob) : null; } catch { return null; }
+  const doc = raw && protoField(raw, 2), note = doc && protoField(doc, 3), text = note && protoField(note, 2);
+  return text ? text.toString('utf8') : null;
+}
+function protoField(b, number) {
+  let o = 0;
+  const varint = () => { let v = 0n, shift = 0n; while (o < b.length) { const x = b[o++]; v |= BigInt(x & 0x7f) << shift; if (!(x & 0x80)) return v; shift += 7n; if (shift > 63n) return null; } return null; };
+  while (o < b.length) {
+    const key = varint();
+    if (key == null) return null;
+    const wire = Number(key & 7n), field = Number(key >> 3n);
+    if (wire === 0) { if (varint() == null) return null; }
+    else if (wire === 1) o += 8;
+    else if (wire === 2) { const len = varint(); if (len == null || len > BigInt(b.length - o)) return null; if (field === number) return b.subarray(o, o + Number(len)); o += Number(len); }
+    else if (wire === 5) o += 4;
+    else return null;
+  }
+  return null;
+}
+const vEsc = (s) => String(s ?? '').replace(/\\/g, '\\\\').replace(/;/g, '\;').replace(/,/g, '\\,').replace(/\r\n|\n/g, '\\n');
+/// Long lines are folded at 75 bytes, as vCard and iCalendar require.
+function fold(line) {
+  let out = '', width = 0;
+  for (const ch of line) {
+    const n = Buffer.byteLength(ch);
+    if (width + n > 75) { out += '\r\n '; width = 1; }
+    out += ch; width += n;
+  }
+  return out;
+}
 
 function readPlist(file) { try { return plist.parse(fs.readFileSync(file)); } catch { return null; } }
 
@@ -165,7 +202,7 @@ function fileRecord(blob) {
 }
 
 function purgeTemp() {
-  try { for (const n of fs.readdirSync(os.tmpdir())) if (n.startsWith(TEMP_PREFIX)) fs.rmSync(path.join(os.tmpdir(), n), { recursive: true, force: true }); } catch {}
+  try { for (const n of fs.readdirSync(os.tmpdir())) if (n.startsWith(TEMP_PREFIX) || n.startsWith(LEGACY_TEMP_PREFIX)) fs.rmSync(path.join(os.tmpdir(), n), { recursive: true, force: true }); } catch {}
 }
 
 // MARK: reading
@@ -393,10 +430,104 @@ class BackupReader {
     if (!title) return { groups: [] };
     const snippet = cols.has('ZSNIPPET') ? "COALESCE(ZSNIPPET,'')" : "''";
     const modified = ['ZMODIFICATIONDATE1', 'ZMODIFICATIONDATE'].find((c) => cols.has(c)) || '0';
-    const live = cols.has('ZMARKEDFORDELETION') ? 'AND COALESCE(ZMARKEDFORDELETION, 0) = 0' : '';
-    const g = { id: 0, title: 'All Notes', subtitle: '', columns: ['Title', 'Beginning of the note', 'Last changed'], rows: [] };
-    for (const r of db.prepare(`SELECT ${title} t, ${snippet} s, CAST(${modified} AS REAL) m FROM ZICCLOUDSYNCINGOBJECT WHERE ${title} IS NOT NULL ${live} ORDER BY 3 DESC`).all()) g.rows.push([r.t, r.s, stamp(r.m)]);
+    const live = cols.has('ZMARKEDFORDELETION') ? 'AND COALESCE(n.ZMARKEDFORDELETION, 0) = 0' : '';
+    // The whole text is in ZICNOTEDATA.ZDATA (compressed); some layouts point from the note to it, others back.
+    const dataCols = db.columns('ZICNOTEDATA');
+    const join = !dataCols.has('ZDATA') ? '' : cols.has('ZNOTEDATA') ? 'LEFT JOIN ZICNOTEDATA d ON d.Z_PK = n.ZNOTEDATA'
+      : dataCols.has('ZNOTE') ? 'LEFT JOIN ZICNOTEDATA d ON d.ZNOTE = n.Z_PK' : '';
+    const g = { id: 0, title: 'All Notes', subtitle: '', columns: ['Title', 'Text', 'Last changed'], rows: [] };
+    for (const r of db.prepare(`SELECT n.${title} t, ${snippet.replace('ZSNIPPET', 'n.ZSNIPPET')} s, CAST(${modified === '0' ? '0' : 'n.' + modified} AS REAL) m, ${join ? 'd.ZDATA' : 'NULL'} z
+        FROM ZICCLOUDSYNCINGOBJECT n ${join} WHERE n.${title} IS NOT NULL ${live} ORDER BY 3 DESC`).all()) {
+      g.rows.push([r.t, (r.z && noteText(Buffer.from(r.z))) || r.s, stamp(r.m)]);
+    }
     return { groups: [g] };
+  }
+
+  /// Photos and videos in the camera roll part of the backup, by device folder (100APPLE…). Useful when the phone is gone.
+  async photos() {
+    const groups = [], index = new Map();
+    for (const r of this.manifest.prepare("SELECT relativePath p, fileID id FROM Files WHERE domain = 'CameraRollDomain' AND flags = 1 AND relativePath LIKE 'Media/DCIM/%' ORDER BY relativePath").all()) {
+      const folder = path.posix.basename(path.posix.dirname(r.p));
+      if (!index.has(folder)) { index.set(folder, groups.length); groups.push({ id: groups.length, title: folder, subtitle: 'Camera roll', columns: ['File', 'Kind'], rows: [], fileIDs: [] }); }
+      const ext = path.posix.extname(r.p).slice(1).toUpperCase();
+      const g = groups[index.get(folder)];
+      g.rows.push([path.posix.basename(r.p), ['MOV', 'MP4', 'M4V'].includes(ext) ? 'Video' : ext === 'AAE' ? 'Edit settings' : 'Photo']);
+      g.fileIDs.push(r.id);
+    }
+    return { groups };
+  }
+
+  /// Voice Memos: the recordings list (newer iOS keeps it in the app's shared group, older iOS in Media) and the audio files.
+  async voiceMemos() {
+    const places = [['AppDomainGroup-group.com.apple.VoiceMemos.shared', 'Recordings/CloudRecordings.db', 'ZCLOUDRECORDING', 'Recordings/'],
+      ['MediaDomain', 'Media/Recordings/Recordings.db', 'ZRECORDING', 'Media/Recordings/']];
+    const g = { id: 0, title: 'All Recordings', subtitle: '', columns: ['File', 'Recorded', 'Length'], rows: [], fileIDs: [] };
+    const used = new Set();
+    const safe = (s) => String(s).replace(/[\\/:*?"<>|\x00-\x1f]/g, '-').trim().replace(/[. ]+$/, '');
+    for (const [domain, dbPath, table, folder] of places) {
+      const db = await this.database(domain, dbPath);
+      if (!db) continue;
+      const cols = db.columns(table);
+      if (!cols.has('ZPATH')) continue;
+      const names = ['ZCUSTOMLABEL', 'ZENCRYPTEDTITLE'].filter((c) => cols.has(c)).map((c) => `NULLIF(TRIM(${c}), '')`);
+      const title = !names.length ? 'NULL' : names.length === 1 ? names[0] : `COALESCE(${names.join(', ')})`;
+      for (const r of db.prepare(`SELECT ${title} t, ZPATH p, CAST(${cols.has('ZDATE') ? 'ZDATE' : '0'} AS REAL) d, CAST(${cols.has('ZDURATION') ? 'ZDURATION' : '0'} AS REAL) n FROM ${table} ORDER BY 3 DESC`).all()) {
+        const file = path.posix.basename(String(r.p || ''));
+        const id = file && this.fileID(domain, folder + file);
+        if (!id) continue;
+        const ext = path.posix.extname(file).slice(1) || 'm4a';
+        const label = r.t ? String(r.t) : file.replace(/\.[^.]*$/, '');
+        let name = `${safe(label)}.${ext}`;
+        if (used.has(name.toLowerCase())) name = `${safe(label)} ${id.slice(0, 6)}.${ext}`;
+        used.add(name.toLowerCase());
+        const secs = Math.round(Number(r.n) || 0);
+        g.rows.push([name, stamp(r.d), `${Math.floor(secs / 60)}:${pad(secs % 60)}`]);
+        g.fileIDs.push(id);
+      }
+    }
+    return { groups: [g] };
+  }
+
+  /// The contact list as a vCard 3.0 file, which Contacts, Outlook, Gmail and Android all import. Same output as the Mac.
+  async vCard() {
+    const db = await this.database('HomeDomain', 'Library/AddressBook/AddressBook.sqlitedb');
+    if (!db) return null;
+    const phones = new Map(), mails = new Map();
+    for (const r of db.prepare('SELECT record_id id, property p, value v FROM ABMultiValue WHERE property IN (3, 4) AND value IS NOT NULL').all()) {
+      const m = Number(r.p) === 3 ? phones : mails;
+      if (!m.has(r.id)) m.set(r.id, []);
+      m.get(r.id).push(String(r.v));
+    }
+    let out = '';
+    for (const r of db.prepare("SELECT ROWID id, COALESCE(First,'') f, COALESCE(Last,'') l, COALESCE(Organization,'') o FROM ABPerson ORDER BY ROWID").all()) {
+      const full = [r.f, r.l].filter(Boolean).join(' ');
+      const card = ['BEGIN:VCARD', 'VERSION:3.0', `N:${vEsc(r.l)};${vEsc(r.f)};;;`, `FN:${vEsc(full || r.o)}`];
+      if (r.o) card.push(`ORG:${vEsc(r.o)}`);
+      for (const t of phones.get(r.id) || []) card.push(`TEL;TYPE=VOICE:${vEsc(t)}`);
+      for (const e of mails.get(r.id) || []) card.push(`EMAIL;TYPE=INTERNET:${vEsc(e)}`);
+      card.push('END:VCARD');
+      out += card.map(fold).join('\r\n') + '\r\n';
+    }
+    return out || null;
+  }
+
+  /// The calendars as one iCalendar (.ics) file for Calendar, Outlook or Google Calendar. Same output as the Mac.
+  async iCalendar() {
+    const db = await this.database('HomeDomain', 'Library/Calendar/Calendar.sqlitedb');
+    if (!db) return null;
+    const iso = (t) => new Date((Number(t) + APPLE) * 1000).toISOString();
+    const utc = (t) => iso(t).replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z'), day = (t) => iso(t).slice(0, 10).replace(/-/g, '');
+    const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//PortHop//Backup export//EN', 'CALSCALE:GREGORIAN'];
+    for (const r of db.prepare(`SELECT i.ROWID id, COALESCE(i.summary,'') s, CAST(i.start_date AS REAL) a, CAST(i.end_date AS REAL) b, COALESCE(i.all_day, 0) d, COALESCE(c.title,'Calendar') cal
+        FROM CalendarItem i LEFT JOIN Calendar c ON c.ROWID = i.calendar_id ORDER BY i.start_date`).all()) {
+      const allDay = !!Number(r.d), end = Math.max(Number(r.b), Number(r.a) + (allDay ? 86400 : 0));
+      lines.push('BEGIN:VEVENT', `UID:porthop-${r.id}@backup`, `DTSTAMP:${now}`, allDay ? `DTSTART;VALUE=DATE:${day(r.a)}` : `DTSTART:${utc(r.a)}`,
+        allDay ? `DTEND;VALUE=DATE:${day(end)}` : `DTEND:${utc(end)}`, `SUMMARY:${vEsc(r.s)}`, `CATEGORIES:${vEsc(r.cal)}`, 'END:VEVENT');
+    }
+    if (lines.length <= 4) return null;
+    lines.push('END:VCALENDAR');
+    return lines.map(fold).join('\r\n') + '\r\n';
   }
 
   async calendar() {

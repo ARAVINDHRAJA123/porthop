@@ -7,7 +7,7 @@ const { packager } = require('@electron/packager');
 (async () => {
   const toolsSrc = path.join(__dirname, 'tools-win');
   if (!fs.existsSync(path.join(toolsSrc, 'afcclient.exe'))) throw new Error('Run "python3 fetch-tools.py" first: tools-win is missing.');
-  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'pae-pack-'));
+  const stage = fs.mkdtempSync(path.join(os.tmpdir(), 'porthop-pack-'));
   const tools = path.join(stage, 'tools');
   fs.cpSync(toolsSrc, tools, { recursive: true });
   // The interface font and icons ship inside the app; their licences go next to the tools' licences, where the Licences menu opens.
@@ -26,6 +26,8 @@ const { packager } = require('@electron/packager');
   const locales = path.join(out, 'locales');
   for (const f of fs.readdirSync(locales)) if (f !== 'en-US.pak') fs.rmSync(path.join(locales, f));
   fs.copyFileSync(path.join(__dirname, 'README.md'), path.join(out, 'READ ME FIRST.txt'));
+  // porthop.cmd: the command line, run by the app's own Electron in Node mode (no separate Node install needed).
+  fs.writeFileSync(path.join(out, 'porthop.cmd'), '@echo off\r\nsetlocal\r\nset ELECTRON_RUN_AS_NODE=1\r\n"%~dp0PortHop.exe" "%~dp0resources\\app.asar\\cli.js" %*\r\n');
   const zip = path.join(__dirname, 'dist', 'PortHop-Windows.zip');
   fs.rmSync(zip, { force: true });
   execFileSync('zip', ['-r', '-q', '-X', zip, path.basename(out)], { cwd: path.dirname(out) });

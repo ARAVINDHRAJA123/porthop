@@ -27,8 +27,21 @@ module.exports = async function (T, check, macTests) {
     const out = path.join(T, `bkout-${label}`); fs.mkdirSync(out);
     const e1 = await reader.extract(roll, [0], out), e2 = await reader.extract(roll, [0], out);
     const text = bk.csv(msg[1]);
-    ck(`${label} backup files, extract, csv`, calls.groups.length === 0 && calls.note.length > 10 && fg.length === 7 && roll.title === 'Camera Roll' && e1.length === 1 && e2.length === 1 && e1[0] !== e2[0]
+    ck(`${label} backup files, extract, csv`, calls.groups.length === 0 && calls.note.length > 10 && fg.length === 8 && roll.title === 'Camera Roll' && e1.length === 1 && e2.length === 1 && e1[0] !== e2[0]
       && fs.readFileSync(e1[0]).equals(Buffer.from('jpegbytes'.repeat(100))) && text.startsWith('"Date","From","Message"\r\n') && text.includes('"Hi ""Asha"", how are you?"'), JSON.stringify([calls, e1, e2]));
+    // Backup extras: full note text, voice memos, photos and videos, contacts as vCard and calendars as .ics.
+    const fullNote = (notes.find((n) => n[0] === 'Shopping') || [])[1], locked = (notes.find((n) => n[0] === 'Ideas') || [])[1];
+    const memos = await g('voiceMemos'), cam = await g('photos');
+    const mout = path.join(T, `memos-${label}`); fs.mkdirSync(mout);
+    const pulled = memos.length ? await reader.extract(memos[0], memos[0].rows.map((_, i) => i), mout) : [];
+    const vcf = (await reader.vCard()) || '', ics = (await reader.iCalendar()) || '';
+    ck(`${label} backup extras: note text, voice memos, photos, vCard, ics`, fullNote === 'Shopping\nMilk, eggs, bread\nAsk about the café ☕' && locked === 'App names'
+      && memos[0].rows.map((r) => r[0]).join('|') === 'Lecture- week 3.m4a|Song idea.m4a' && memos[0].rows[1][2] === '1:05'
+      && pulled.map((p) => path.basename(p)).sort().join('|') === 'Lecture- week 3.m4a|Song idea.m4a' && fs.statSync(pulled[0]).size === 700
+      && cam.map((c) => c.title).join() === '100APPLE,101APPLE' && JSON.stringify(cam[1].rows) === '[["IMG_0050.MOV","Video"]]'
+      && vcf.split('BEGIN:VCARD').length === 4 && vcf.includes('N:Rao;Asha;;;\r\nFN:Asha Rao\r\nTEL;TYPE=VOICE:(415) 555-0101\r\nEMAIL;TYPE=INTERNET:asha@example.com')
+      && vcf.includes('FN:City Garage\r\nORG:City Garage') && ics.startsWith('BEGIN:VCALENDAR\r\n') && ics.split('BEGIN:VEVENT').length === 4
+      && ics.includes('SUMMARY:Birthday') && ics.includes('DTSTART;VALUE=DATE:') && ics.endsWith('END:VCALENDAR\r\n'), JSON.stringify([fullNote, locked, memos[0] && memos[0].rows, cam.map((c) => c.rows)]));
     const pages = path.join(T, `pages-${label}`); fs.mkdirSync(pages);
     const p1 = await reader.webPage(msg[1], 'Messages', pages), p2 = await reader.webPage(wa[0], 'WhatsApp', pages);
     const h1 = p1 ? fs.readFileSync(p1, 'utf8') : '', h2 = p2 ? fs.readFileSync(p2, 'utf8') : '';

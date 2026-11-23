@@ -62,8 +62,9 @@ struct DevicePill: View {
 /// What a typed request asks for. Everything is optional; whatever is recognised is shown back as chips.
 extension AskContext {
     @MainActor init(_ m: DeviceManager) {
-        self.init(isAndroid: m.isAndroid, albums: (m.smartAlbums + m.userAlbums).map { ($0.id, $0.title) },
-                  userAlbums: m.userAlbums.map { ($0.id, $0.title) }, destinations: Destinations.list(m))
+        self.init(isAndroid: m.isAndroid, albums: m.allAlbums.map { ($0.id, $0.title) },
+                  userAlbums: m.userAlbums.map { ($0.id, $0.title) }, people: m.peopleAlbums.map { ($0.id, $0.title) },
+                  destinations: Destinations.list(m))
     }
 }
 
@@ -198,11 +199,34 @@ struct ActivityBadge: View {
     }
 }
 
+/// Shown when GitHub has a newer release.
+struct UpdateBadge: View {
+    @ObservedObject var m: DeviceManager
+    var body: some View {
+        if let r = m.update {
+            Button { m.offerUpdate() } label: {
+                Label("Update to \(r.version)", systemImage: "arrow.down.circle.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.text)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .toolbarChrome(stroke: Theme.accent.opacity(0.5))
+            }
+            .buttonStyle(.plain)
+            .help("A newer PortHop is available")
+        }
+    }
+}
+
 struct SettingsMenu: View {
+    @ObservedObject var m: DeviceManager
     @AppStorage("modernTransitions") private var modern = true
+    @AppStorage("autoUpdateCheck") private var autoUpdate = true
     var body: some View {
         Menu {
             Toggle("Animated screen transitions", isOn: $modern)
+            Divider()
+            Button(m.checkingUpdates ? "Checking for Updates…" : "Check for Updates…") { m.checkForUpdates(manual: true) }.disabled(m.checkingUpdates)
+            Toggle("Check for Updates Weekly", isOn: $autoUpdate)
             Divider()
             Button("Open-Source Licences") {
                 if let url = Bundle.main.resourceURL?.appendingPathComponent("Licenses"), FileManager.default.fileExists(atPath: url.path) {
@@ -216,6 +240,19 @@ struct SettingsMenu: View {
                 Text("Match System").tag("system")
                 Text("Light").tag("light")
                 Text("Dark").tag("dark")
+            }
+            Button("Command-Line Tool…") {
+                let path = (Bundle.main.bundlePath as NSString).appendingPathComponent("Contents/Helpers/porthop")
+                let command = "sudo mkdir -p /usr/local/bin && sudo ln -sf \"\(path)\" /usr/local/bin/porthop"
+                let a = NSAlert()
+                a.messageText = "Use PortHop from Terminal"
+                a.informativeText = "porthop lists devices and groups, copies a group (only what's new), and makes backups, for scripts and automation. To type just “porthop”, run this once in Terminal:\n\n\(command)\n\nThen try: porthop help"
+                a.addButton(withTitle: "Copy Command")
+                a.addButton(withTitle: "Close")
+                if a.runModal() == .alertFirstButtonReturn {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                }
             }
             Divider()
             Button("PortHop on GitHub") {

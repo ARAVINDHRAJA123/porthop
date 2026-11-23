@@ -15,6 +15,8 @@ const ICONS = {
   box: 'inventory_2', up: 'upload', down: 'download', arrow: 'arrow_forward', back: 'arrow_back', chev: 'expand_more',
   dots: 'more_horiz', search: 'search', drive: 'hard_drive', cable: 'cable', lock: 'lock', refresh: 'refresh',
   restart: 'restart_alt', moon: 'bedtime', sun: 'light_mode', contrast: 'contrast', plus: 'add', warn: 'warning', check: 'check', camera: 'photo_camera',
+  bolt: 'bolt', locoff: 'location_off', report: 'summarize', update: 'system_update_alt', wifi: 'wifi', pdf: 'picture_as_pdf', mic: 'mic',
+  contact: 'contacts', event: 'event', terminal: 'terminal', backup: 'backup',
 };
 
 async function get(path) {

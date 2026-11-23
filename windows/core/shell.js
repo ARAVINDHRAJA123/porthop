@@ -49,15 +49,17 @@ function exe(name) { return WIN ? name + '.exe' : name; }
 function supportDir() {
   const base = WIN ? (process.env.LOCALAPPDATA || path.join(os.homedir(), 'AppData', 'Local'))
     : path.join(os.homedir(), 'Library', 'Application Support');
-  return path.join(base, 'PhoneAlbumExtractor');
+  return path.join(base, 'PortHop');
 }
+/// Where versions before 2.1 kept the Android tools; still looked in.
+function legacySupportDir() { return path.join(path.dirname(supportDir()), 'PhoneAlbumExtractor'); }
 
 function locateTools(resourcesDir, allowOverride = true) {
   const dirs = [];
   if (allowOverride && process.env.PHONE_TOOLS_DIR) dirs.push(process.env.PHONE_TOOLS_DIR);
   if (resourcesDir) dirs.push(path.join(resourcesDir, 'tools'));
   dirs.push(path.join(__dirname, '..', 'tools'));
-  dirs.push(path.join(supportDir(), 'platform-tools'));
+  dirs.push(path.join(supportDir(), 'platform-tools'), path.join(legacySupportDir(), 'platform-tools'));
   if (!WIN) dirs.push('/opt/homebrew/bin', '/usr/local/bin');
   for (const d of (process.env.PATH || '').split(path.delimiter)) if (d) dirs.push(d);
   const find = (name) => {

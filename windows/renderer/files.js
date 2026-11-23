@@ -79,7 +79,7 @@ let filesProgress = null;
 
 // MARK: backups
 
-let backupProgress = null, backupRunning = false;
+let backupProgress = null, backupRunning = false, pendingAutoBackup = false;
 function backupView() {
   const list = h('div', {}), folderText = h('span', {}), drivesRow = h('div', { class: 'drives' }), status = h('div', {});
   const bar = h('progress', { max: 1, value: 0, class: 'hidden' });
@@ -117,13 +117,17 @@ function backupView() {
       h('label', {}, 'Type RESTORE to confirm:', word),
       h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), goBtn)));
   }
+  const autoBox = h('input', { type: 'checkbox', onchange: (e) => api.call('backup:auto', e.target.checked) });
   async function run(restore) {
     restoringNow = !!restore;
     backupRunning = true; start.classList.add('hidden'); stop.classList.remove('hidden'); stop.disabled = false; bar.classList.remove('hidden'); bar.removeAttribute('value');
     status.replaceChildren(h('div', { class: 'dim', style: 'margin-top:8px' }, `Starting… enter the passcode on the ${kindWord()} if it asks.`));
     backupProgress = (p) => { if (p.percent != null) bar.value = p.percent; status.replaceChildren(h('div', { class: 'dim', style: 'margin-top:8px' }, p.phase + (p.percent != null ? ` ${Math.round(p.percent * 100)}%` : ''))); };
+    const automatic = !restore && pendingAutoBackup;
+    pendingAutoBackup = false;
     const problem = restore ? await api.call('backup:restore', restore) : await api.call('backup:start');
     backupRunning = false; backupProgress = null;
+    if (automatic) api.call('notify', problem ? { title: 'The automatic backup didn’t finish', body: problem } : { title: 'Backup complete', body: `${state.details ? state.details.name : 'The device'} is backed up.` });
     start.classList.remove('hidden'); stop.classList.add('hidden'); bar.classList.add('hidden');
     status.replaceChildren(h('div', { class: 'note' + (problem ? '' : ' ok') }, problem || (restore ? `Restore complete. The ${kindWord()} is restarting and will reappear here when it is back.` : 'Backup complete.')));
     drawList(await api.call('backup:list'));
@@ -131,6 +135,8 @@ function backupView() {
   (async () => {
     folderText.textContent = '‎' + state.backupFolder;
     drawList(await api.call('backup:list'));
+    autoBox.checked = await api.call('backup:auto');
+    if (pendingAutoBackup && state.canBackup && !backupRunning) run();
     for (const d of await api.call('drives')) drivesRow.append(h('button', { class: 'chip', onclick: () => setFolder(d.path + (/[\\/]$/.test(d.path) ? '' : '/') + 'Phone Backups') }, `${d.name} · ${bytes(d.free)} free`));
   })();
   return viewBox(h('div', { class: 'scroll' }, h('div', { class: 'pad', style: 'max-width:820px' },
@@ -139,6 +145,7 @@ function backupView() {
       h('div', { class: 'dest-row' }, icon('folder'), folderText, h('button', { class: 'btn', onclick: async () => { const p = await api.call('pick:folder', 'Choose a backup folder'); if (p) setFolder(p); } }, 'Choose…')), drivesRow),
     h('div', { class: 'card', style: 'margin-top:16px' }, h('h3', {}, 'Back up now'),
       h('div', { class: 'dim', style: 'margin-bottom:12px' }, `Keep the ${kindWord()} connected and unlocked. The first backup can take a long time; later ones only copy what changed. Nothing on the ${kindWord()} is changed or removed.`),
-      state.canBackup ? h('div', { style: 'display:flex;gap:10px' }, start, stop) : h('div', { class: 'note' }, 'The backup tool is missing from this copy of the app.'), h('div', { style: 'margin-top:12px' }, bar), status),
+      state.canBackup ? h('div', { style: 'display:flex;gap:10px' }, start, stop) : h('div', { class: 'note' }, 'The backup tool is missing from this copy of the app.'), h('div', { style: 'margin-top:12px' }, bar), status,
+      h('label', { style: 'margin-top:10px;display:flex;gap:8px;align-items:center' }, autoBox, `Back up when this ${kindWord()} is plugged in, once a day (iOS asks for the passcode to start)`)),
     h('div', { class: 'card', style: 'margin-top:16px' }, h('h3', {}, 'Backups in this folder'), list))));
 }

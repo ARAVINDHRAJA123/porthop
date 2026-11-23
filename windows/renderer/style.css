@@ -169,7 +169,7 @@ code { background: var(--md-surface-container-high); padding: 6px 10px; border-r
 .chip { height: 32px; padding: 0 14px; border-radius: var(--r-sm); border: 1px solid var(--md-outline-variant); color: var(--md-on-surface-variant);
   font: 600 13px/20px 'Roboto Flex', sans-serif; display: inline-flex; align-items: center; gap: 6px; transition: border-radius var(--spatial-fast), background var(--effects); }
 .chip.on { background: var(--md-secondary-container); color: var(--md-on-secondary-container); border-color: transparent; border-radius: var(--r-lg); }
-.chip.on.violet { background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); }
+.chip.on.violet { background: var(--md-warning-container); color: var(--md-on-warning-container); }
 .chip:active { border-radius: var(--r-full); }
 
 /* The channel: wavy progress and cards hopping along the arc. */
@@ -293,3 +293,16 @@ progress::-webkit-progress-bar { background: transparent; } progress::-webkit-pr
 .hop-row .tile.big { width: 40px; height: 40px; background: var(--md-tertiary-container) !important; color: var(--md-on-tertiary-container); }
 .hop-text { flex: 1; min-width: 0; } .hop-text b, .hop-text small { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hop-text small { color: var(--md-on-surface-variant); font-size: 12px; }
+
+/* Windows: Apple's iPhone driver is not running */
+.driver-note { display: flex; align-items: center; gap: 14px; max-width: 660px; text-align: left; padding: 14px 18px; border-radius: var(--r-xl);
+  background: var(--md-warning-container); color: var(--md-on-warning-container); }
+.driver-note > svg, .driver-note > span > svg { flex: none; }
+.driver-note .dim { color: inherit; opacity: .85; font-size: 12.5px; }
+.driver-note .btn { flex: none; }
+
+/* Saved hops that run by themselves; the file-name pattern row */
+.tb-btn.on { color: var(--md-on-primary-container); background: var(--md-primary-container); }
+.name-row { display: flex; align-items: center; gap: 8px; }
+.update-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--md-primary-container); color: var(--md-on-primary-container); }
+.name-row input { background: var(--md-surface-container-high); border-radius: 12px; padding: 8px 12px; }

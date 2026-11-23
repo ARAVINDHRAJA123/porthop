@@ -1,8 +1,16 @@
 [
-  { "pattern": "{album}/{year}/{month} {monthName}", "date": "2025-09-16", "album": "Hidden", "directory": "DCIM/100APPLE", "expect": "Hidden/2025/09 September" },
-  { "pattern": "{year}-{month}-{day}", "date": "2024-02-29", "album": "", "directory": "DCIM/100APPLE", "expect": "2024-02-29" },
-  { "pattern": "{folder}/{album}", "date": "2025-01-05", "album": "Trips/2025", "directory": "DCIM/104APPLE", "expect": "104APPLE/Trips-2025" },
-  { "pattern": "../{year}//./x", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "2023/x" },
-  { "pattern": "{album}", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "Photos" },
-  { "pattern": "", "date": "2023-07-01", "album": "A", "directory": "DCIM/100APPLE", "expect": "" }
+  {"pattern": "{album}/{year}/{month} {monthName}", "date": "2025-09-16", "album": "Hidden", "directory": "DCIM/100APPLE", "expect": "Hidden/2025/09 September"},
+  {"pattern": "{year}-{month}-{day}", "date": "2024-02-29", "album": "", "directory": "DCIM/100APPLE", "expect": "2024-02-29"},
+  {"pattern": "{folder}/{album}", "date": "2025-01-05", "album": "Trips/2025", "directory": "DCIM/104APPLE", "expect": "104APPLE/Trips-2025"},
+  {"pattern": "../{year}//./x", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "2023/x"},
+  {"pattern": "{album}", "date": "2023-07-01", "album": "", "directory": "DCIM/100APPLE", "expect": "Photos"},
+  {"pattern": "", "date": "2023-07-01", "album": "A", "directory": "DCIM/100APPLE", "expect": ""},
+  {"pattern": "{year}\\{month}", "date": "2025-09-16", "album": "", "directory": "DCIM/100APPLE", "expect": "2025/09"},
+  {"pattern": "{device}/{kind}", "date": "2025-09-16", "album": "", "directory": "DCIM/100APPLE", "device": "Asha's iPhone", "video": true, "expect": "Asha's iPhone/Videos"},
+  {"pattern": "{kind} {hour}h", "date": "2025-09-16", "time": "07:05:09", "album": "", "directory": "DCIM/100APPLE", "screenshot": true, "expect": "Screenshots 07h"},
+  {"pattern": "{device}", "date": "2025-09-16", "album": "", "directory": "DCIM/100APPLE", "device": "", "expect": "iPhone"},
+  {"name": "{year}-{month}-{day} {hour}.{minute}.{second}", "date": "2025-09-16", "time": "14:03:22", "album": "", "directory": "DCIM/100APPLE", "filename": "IMG_0001.HEIC", "expectName": "2025-09-16 14.03.22"},
+  {"name": "{device} {name}", "date": "2025-09-16", "album": "", "directory": "DCIM/100APPLE", "device": "Asha: iPhone", "filename": "IMG_0002.JPG", "expectName": "Asha- iPhone IMG_0002"},
+  {"name": "   ", "date": "2025-09-16", "album": "", "directory": "DCIM/100APPLE", "filename": "IMG_0003.JPG", "expectName": null},
+  {"name": "{album}/{name}?. ", "date": "2025-09-16", "album": "Trips", "directory": "DCIM/100APPLE", "filename": "IMG_3.MOV", "expectName": "Trips-IMG_3-"}
 ]

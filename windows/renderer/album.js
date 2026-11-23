@@ -131,11 +131,11 @@ async function exportSheet(meta, query, ids, totalBytes, n, preset) {
   const destText = h('span', {}), spaceNote = h('div', {});
   const drivesRow = h('div', { class: 'drives' });
   const opt = { includeLiveVideo: false, useOriginalNames: false, subfolder: 'flat', skipExisting: true, setDates: true,
-    editedVersions: false, convertHEIC: false, folderPattern: '{year}/{month}', albumName: meta.title };
+    editedVersions: false, convertHEIC: false, folderPattern: '{year}/{month}', albumName: meta.title, namePattern: '', removeLocation: false, saveReport: true };
   const [drives, facts] = await Promise.all([api.call('drives'), api.call('export:facts', { query, ids })]);
   // A whole group (no selection, no filter or search) can be saved as a one-click hop.
   const whole = !ids && query.filter === 'all' && !query.search && !query.from && !query.minBytes;
-  let saveHop = false, hopName = '';
+  let saveHop = false, hopName = '', autoHop = false;
   const refresh = async () => {
     destText.textContent = '‎' + dest;
     const free = await api.call('space', dest);
@@ -149,18 +149,24 @@ async function exportSheet(meta, query, ids, totalBytes, n, preset) {
   const check = (key, text) => h('label', {}, h('input', { type: 'checkbox', checked: opt[key], onchange: (e) => (opt[key] = e.target.checked) }), text);
   const patternRow = h('div', { class: 'hidden pattern' },
     h('input', { class: 'search', style: 'margin:6px 0 4px;width:100%', value: opt.folderPattern, oninput: (e) => (opt.folderPattern = e.target.value) }),
-    h('div', { class: 'dim', style: 'font-size:12px' }, 'Use {year} {month} {monthName} {day} {album} {folder}; “/” makes a folder inside a folder.'));
+    h('div', { class: 'dim', style: 'font-size:12px' }, 'Use {year} {month} {monthName} {day} {hour} {minute} {second} {album} {folder} {device} {kind}; “\\” or “/” makes a folder inside a folder.'));
+  const nameExample = h('div', { class: 'dim', style: 'font-size:12px' }, 'Keep the device’s names, or use e.g. {year}-{month}-{day} {hour}.{minute}.{second} or {device} {name}.');
+  const nameRow = h('label', { class: 'name-row' }, 'File names: ', h('input', { class: 'search', placeholder: `Keep the ${kindWord()}'s names`, style: 'flex:1;margin:0',
+    oninput: (e) => { opt.namePattern = e.target.value; nameExample.textContent = opt.namePattern.trim() ? 'Same-second shots get (2), (3)… at the end.' : 'Keep the device’s names, or use e.g. {year}-{month}-{day} {hour}.{minute}.{second} or {device} {name}.'; } }));
+  const autoRow = h('label', { class: 'hidden' }, h('input', { type: 'checkbox', onchange: (e) => (autoHop = e.target.checked) }), `Run it by itself whenever this ${kindWord()} is plugged in (copies only what’s new, then lets you know)`);
   const hopName_ = h('input', { class: 'search hidden', style: 'margin:6px 0 0;width:100%', oninput: (e) => (hopName = e.target.value) });
   const top = [
     facts.edited ? check('editedVersions', `Copy edited versions (${plural(facts.edited, 'item')} edited in Photos)`) : null,
     facts.cloud ? h('div', { class: 'note' }, `${plural(facts.cloud, 'item')} ${facts.cloud === 1 ? 'is' : 'are'} stored only in iCloud, not on the ${kindWord()}, so ${facts.cloud === 1 ? 'it' : 'they'} can't be copied over USB. Turn off “Optimise Storage” in the ${kindWord()}'s Photos settings to bring ${facts.cloud === 1 ? 'it' : 'them'} back first.`) : null,
-    whole ? h('label', {}, h('input', { type: 'checkbox', onchange: (e) => { saveHop = e.target.checked; hopName_.classList.toggle('hidden', !saveHop);
+    whole ? h('label', {}, h('input', { type: 'checkbox', onchange: (e) => { saveHop = e.target.checked; hopName_.classList.toggle('hidden', !saveHop); autoRow.classList.toggle('hidden', !saveHop);
       if (!hopName) { hopName = `${meta.title} → ${dest.split(/[\\/]/).filter(Boolean).pop()}`; hopName_.value = hopName; } } }), 'Save as a one-click hop (next time it copies only what’s new)') : null,
-    hopName_];
+    hopName_, autoRow];
   const more = h('div', { class: 'hidden' },
     facts.heic ? check('convertHEIC', `Convert HEIC photos to JPEG (${plural(facts.heic, 'photo')})`) : null,
     check('includeLiveVideo', 'Include the short video of each Live Photo'), check('useOriginalNames', 'Use original file names when the device kept them'),
     check('skipExisting', 'Skip files already in this folder (same name and size)'), check('setDates', 'Set each file’s date to when it was taken'),
+    check('removeLocation', 'Remove location from the copies (nothing is re-encoded)'), check('saveReport', 'Save a copy report (a list of what was and wasn’t copied, in “PortHop Reports”)'),
+    nameRow, nameExample,
     h('label', {}, 'Folders: ', h('select', { onchange: (e) => { opt.subfolder = e.target.value; patternRow.classList.toggle('hidden', opt.subfolder !== 'custom'); } }, h('option', { value: 'flat' }, 'One folder'), h('option', { value: 'yearMonth' }, 'By month (2026-11)'), h('option', { value: 'iphoneFolder' }, 'By device folder (100APPLE)'), h('option', { value: 'custom' }, 'Custom pattern…'))), patternRow);
   openModal(h('div', { class: 'sheet' }, h('h2', {}, `Copy ${plural(total, 'item')} from ${meta.title}`), h('div', { class: 'dim' }, `${bytes(totalBytes)} to copy. Nothing is removed from your ${kindWord()}.`),
     h('div', { class: 'stepno' }, h('div', { class: 'num' }, 1), 'Where should they go?'),
@@ -171,13 +177,14 @@ async function exportSheet(meta, query, ids, totalBytes, n, preset) {
     h('button', { class: 'btn', style: 'margin-top:10px', onclick: () => more.classList.toggle('hidden') }, 'More options'), more,
     h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => { pendingFlight = null; closeModal(); } }, 'Cancel'),
       h('button', { class: 'btn primary', onclick: async () => {
-        if (saveHop) await api.call('presets:save', { name: hopName || meta.title, albumID: query.album, dest, options: opt });
+        if (saveHop) await api.call('presets:save', { name: hopName || meta.title, albumID: query.album, dest, options: opt, auto: autoHop });
         runExport(meta, query, ids, dest, opt);
       } }, icon('arrow'), 'Copy'))));
   refresh();
 }
 
-async function runExport(meta, query, ids, dest, options) {
+/// Copies and shows the result. A quiet run (a hop that ran by itself) only opens the result when something went wrong.
+async function runExport(meta, query, ids, dest, options, quiet = false) {
   closeModal();
   if (!ids) { const r = await api.call('album:rows', query); ids = r.rows.map((x) => x[0]); }
   live.export = { copied: 0, skipped: 0, failed: 0, total: ids.length, bytesDone: 0, bytesTotal: 0, bytesPerSecond: 0 };
@@ -188,7 +195,8 @@ async function runExport(meta, query, ids, dest, options) {
   let s;
   try { s = await api.call('export:start', { query, ids, dest, options }); }
   finally { live.export = null; updateLive(); }
-  if (!s) return;
+  if (!s) return null;
+  if (quiet && !s.failures.length && !s.fatalError && !s.disconnected && !s.stalled) return s;
   const title = s.fatalError ? 'The copy could not start' : s.stalled ? `The ${kindWord()} stopped responding` : s.disconnected ? `The ${kindWord()} was disconnected` : s.cancelled ? 'Copy stopped'
     : s.failures.length ? 'Finished, with some items missing' : 'All done';
   const text = s.fatalError ? s.fatalError : s.stalled ? `Everything copied so far is safe. It usually means the ${kindWord()} locked itself: unlock it, then copy to the same folder to continue.`
@@ -201,5 +209,7 @@ async function runExport(meta, query, ids, dest, options) {
     s.failures.length ? h('div', { class: 'fails' }, s.failures.slice(0, 200).map((f) => h('div', {}, `${f.filename} — ${f.reason}`))) : null,
     h('div', { class: 'foot' },
       s.failures.length && !s.disconnected ? h('button', { class: 'btn', onclick: () => runExport(meta, query, s.failedIds, dest, options) }, 'Try Those Again') : null,
+      s.reportPath ? h('button', { class: 'btn', onclick: () => api.call('reveal', s.reportPath) }, icon('file'), 'Copy Report') : null,
       h('button', { class: 'btn', onclick: () => api.call('reveal', s.destination) }, icon('folder'), 'Show Folder'), h('button', { class: 'btn primary', onclick: closeModal }, 'Done'))));
+  return s;
 }

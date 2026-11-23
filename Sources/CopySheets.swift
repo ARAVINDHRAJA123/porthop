@@ -20,6 +20,7 @@ struct ExportSheet: View {
     @State private var editedCount = 0
     @State private var cloudCount = 0
     @State private var saveHop = false
+    @State private var autoHop = false
     @State private var hopName = ""
     @State private var freeBytes: Int64? = nil
     @State private var destinationFormat = ""
@@ -116,6 +117,23 @@ struct ExportSheet: View {
                             option("Convert HEIC photos to JPEG", "Only needed for apps that can't open HEIC. Slower.", $m.options.convertHEIC)
                         }
                         option("Use original camera filenames", "The name the photo had when it was taken or imported.", $m.options.useOriginalNames)
+                        option("Remove location from the copies", "Wipes where each photo and video was taken. Nothing is re-encoded, so quality is untouched.", $m.options.removeLocation)
+                        option("Save a copy report", "A list of what was copied, and anything that wasn't with the reason, in a “PortHop Reports” folder.", $m.options.saveReport)
+                        VStack(alignment: .leading, spacing: 5) {
+                            HStack {
+                                Text("File names")
+                                Spacer()
+                                TextField("Keep the \(m.deviceKind)'s names", text: $m.options.namePattern).textFieldStyle(.roundedBorder).frame(width: 300)
+                            }
+                            if !m.options.namePattern.trimmingCharacters(in: .whitespaces).isEmpty, let first = request.assets.first {
+                                let name = Pattern.fileStem(m.options.namePattern, first, album: request.albumName, device: m.deviceName, original: first.filename) ?? first.filename
+                                Text("Example: \(name).\((first.filename as NSString).pathExtension)  ·  same-second shots get (2), (3)…")
+                                    .font(.caption.monospaced()).foregroundStyle(Theme.accent).lineLimit(1).truncationMode(.middle)
+                            } else {
+                                Text("For example {year}-{month}-{day} {hour}.{minute}.{second} or {device} {name}.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
                         HStack {
                             Text("Arrange in")
                             Spacer()
@@ -130,7 +148,8 @@ struct ExportSheet: View {
                                 Text("Use \(SubfolderMode.patternTokens); “/” makes a folder inside a folder.")
                                     .font(.caption).foregroundStyle(.secondary)
                                 if let first = request.assets.first {
-                                    Text("Example: \(SubfolderMode.folder(m.options.folderPattern, first, album: request.albumName).isEmpty ? "(one folder)" : SubfolderMode.folder(m.options.folderPattern, first, album: request.albumName))/\(first.filename)")
+                                    let folder = SubfolderMode.folder(m.options.folderPattern, first, album: request.albumName, device: m.deviceName)
+                                    Text("Example: \(folder.isEmpty ? "(one folder)" : folder)/\(first.filename)")
                                         .font(.caption.monospaced()).foregroundStyle(Theme.accent).lineLimit(1).truncationMode(.middle)
                                 }
                             }
@@ -143,7 +162,10 @@ struct ExportSheet: View {
             if let albumID = request.albumID, destination != nil {
                 VStack(alignment: .leading, spacing: 6) {
                     option("Save as a one-click hop", "Shows on the home screen; next time it copies only what's new.", $saveHop)
-                    if saveHop { TextField("Name", text: $hopName).textFieldStyle(.roundedBorder) }
+                    if saveHop {
+                        TextField("Name", text: $hopName).textFieldStyle(.roundedBorder)
+                        option("Run it by itself when this \(m.deviceKind) is plugged in", "Copies only what's new and tells you when it's done. Only for this \(m.deviceKind).", $autoHop)
+                    }
                 }
                 .onAppear { if hopName.isEmpty { hopName = "\(request.albumName) → \(destination?.lastPathComponent ?? "")" } }
                 .onChange(of: destination) { d in hopName = "\(request.albumName) → \(d?.lastPathComponent ?? "")"; _ = albumID }
@@ -161,7 +183,7 @@ struct ExportSheet: View {
                     guard let destination else { return }
                     let assets = request.assets
                     if saveHop, let id = request.albumID {
-                        m.savePreset(name: hopName.isEmpty ? request.albumName : hopName, albumID: id, destination: destination, options: m.options)
+                        m.savePreset(name: hopName.isEmpty ? request.albumName : hopName, albumID: id, destination: destination, options: m.options, auto: autoHop)
                     }
                     dismiss()
                     m.startExport(assets, to: destination, albumName: request.albumName)
@@ -330,6 +352,13 @@ struct SummarySheet: View {
                 .frame(height: 140)
                 .background(RoundedRectangle(cornerRadius: 10).fill(Color.primary.opacity(0.05)))
             }
+            if let report = summary.reportURL {
+                Button { NSWorkspace.shared.activateFileViewerSelecting([report]) } label: {
+                    Label("Copy report saved: \(report.lastPathComponent)", systemImage: "list.bullet.rectangle")
+                        .font(.caption).lineLimit(1).truncationMode(.middle)
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.accentLight)
+            }
             HStack {
                 if summary.fatalError == nil {
                     Button { NSWorkspace.shared.open(summary.destination) } label: { Label("Show in Finder", systemImage: "folder") }
@@ -359,6 +388,67 @@ struct SummarySheet: View {
         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.05)))
         .opacity(shown ? 1 : 0).offset(y: shown ? 0 : 10)
         .animation(.spring(response: 0.5, dampingFraction: 0.8).delay(0.15 + 0.07 * Double(order)), value: shown)
+    }
+}
+
+/// Connects an Android phone over Wi-Fi with Wireless debugging (Android 11 and later).
+struct AndroidWirelessButton: View {
+    @ObservedObject var m: DeviceManager
+    @State private var open = false
+    var body: some View {
+        Button { open = true } label: { Label("Connect an Android Phone over Wi-Fi…", systemImage: "wifi") }
+            .buttonStyle(SoftButtonStyle())
+            .sheet(isPresented: $open) { AndroidWirelessSheet(m: m) }
+    }
+}
+
+struct AndroidWirelessSheet: View {
+    @ObservedObject var m: DeviceManager
+    @Environment(\.dismiss) private var dismiss
+    @State private var address = ""
+    @State private var pairAddress = ""
+    @State private var code = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                IconTile(symbol: "wifi", color: .green, size: 40)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Android over Wi-Fi").font(.system(size: 18, weight: .bold, design: .rounded))
+                    Text("On the phone: Settings › Developer options › Wireless debugging (Android 11 or later).").font(.callout).foregroundStyle(.secondary)
+                }
+            }
+            GroupBox("First time only: pair") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Tap “Pair device with pairing code” on the phone, then type what it shows.").font(.caption).foregroundStyle(.secondary)
+                    HStack {
+                        TextField("Pairing address, like 192.168.1.20:37001", text: $pairAddress).textFieldStyle(.roundedBorder)
+                        TextField("Code", text: $code).textFieldStyle(.roundedBorder).frame(width: 90)
+                    }
+                }
+                .padding(4)
+            }
+            GroupBox("Connect") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("The “IP address & Port” on the Wireless debugging screen.").font(.caption).foregroundStyle(.secondary)
+                    TextField("Address, like 192.168.1.20:41235", text: $address).textFieldStyle(.roundedBorder)
+                }
+                .padding(4)
+            }
+            if !m.wirelessMessage.isEmpty { Text(m.wirelessMessage).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(SoftButtonStyle()).keyboardShortcut(.cancelAction)
+                Button(code.isEmpty ? "Connect" : "Pair and Connect") {
+                    m.connectAndroidWireless(pair: pairAddress, code: code, address: address) { ok in if ok { dismiss() } }
+                }
+                .buttonStyle(PrimaryButtonStyle()).keyboardShortcut(.defaultAction).disabled(m.wirelessBusy || address.isEmpty)
+            }
+        }
+        .padding(22)
+        .frame(width: 500)
+        .background(Theme.bg)
+        .onAppear { m.wirelessMessage = "" }
     }
 }
 

@@ -16,9 +16,13 @@ extension BackupKind {
         case .calendar: return .red
         case .calls: return .teal
         case .safari: return .blue
+        case .photos: return .pink
+        case .voiceMemos: return .indigo
         case .files: return .brown
         }
     }
+    /// Rows are files that can be copied out of the backup.
+    var hasFiles: Bool { self == .files || self == .photos || self == .voiceMemos }
 }
 
 extension DeviceManager {
@@ -107,6 +111,84 @@ extension DeviceManager {
                     self.dataMessage = attached > 0 ? "Saved, with its attachments that are in the backup." : "Saved."
                     NSWorkspace.shared.activateFileViewerSelecting([page])
                 } else { self.dataMessage = "The page could not be written to that folder." }
+            }
+        }
+    }
+
+    /// The open chat as a paginated PDF (text stays searchable; photos from the backup are included).
+    func saveChatPDF(to folder: URL) {
+        guard let group = dataGroup, let reader = dataReader, let kind = dataKind else { return }
+        dataMessage = "Making the PDF…"
+        Task.detached {
+            let temp = FileManager.default.temporaryDirectory.appendingPathComponent("PortHop-pdf-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
+            let page = reader.webPage(group, title: kind.title, into: temp)
+            await MainActor.run {
+                guard let page else { self.dataMessage = "The PDF could not be made."; return }
+                let out = Exporter.uniqueURL(for: folder.appendingPathComponent(DeviceManager.safeName("\(group.title) (\(kind.title))") + ".pdf"))
+                PagePrinter.pdf(from: page.appendingPathComponent("index.html"), to: out) { ok in
+                    try? FileManager.default.removeItem(at: temp)
+                    self.dataMessage = ok ? "Saved as a PDF." : "The PDF could not be made."
+                    if ok { NSWorkspace.shared.activateFileViewerSelecting([out]) }
+                }
+            }
+        }
+    }
+
+    /// Every chat as its own web page, plus an index page linking them all.
+    func saveEveryChat(to folder: URL) {
+        guard let data, let reader = dataReader, let kind = dataKind else { return }
+        dataMessage = "Saving \(data.groups.count) chats…"
+        Task.detached {
+            let root = Exporter.uniqueURL(for: folder.appendingPathComponent("\(kind.title) chats"))
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            var links: [(String, String, Int)] = []
+            for g in data.groups {
+                if let page = reader.webPage(g, title: kind.title, into: root) { links.append((g.title, page.lastPathComponent, g.rows.count)) }
+            }
+            func esc(_ t: String) -> String { t.replacingOccurrences(of: "&", with: "&amp;").replacingOccurrences(of: "<", with: "&lt;").replacingOccurrences(of: ">", with: "&gt;") }
+            let items = links.map { "<li><a href=\"\($0.1.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? $0.1)/index.html\">\(esc($0.0))</a> <span>\($0.2) messages</span></li>" }.joined()
+            let html = "<!doctype html><meta charset=utf-8><title>\(kind.title) chats</title><style>body{font:15px -apple-system,Segoe UI,sans-serif;max-width:760px;margin:40px auto;padding:0 16px}li{margin:8px 0}span{color:#888;font-size:13px}</style><h1>\(kind.title) chats</h1><ul>\(items)</ul>"
+            let index = root.appendingPathComponent("index.html")
+            try? html.write(to: index, atomically: true, encoding: .utf8)
+            let saved = links.count
+            await MainActor.run {
+                self.dataMessage = "Saved \(saved) chats."
+                NSWorkspace.shared.activateFileViewerSelecting([index])
+            }
+        }
+    }
+
+    /// Contacts as a vCard file, or calendars as an .ics file, ready to import anywhere.
+    func saveStandardFile(to folder: URL) {
+        guard let reader = dataReader, let kind = dataKind, kind == .contacts || kind == .calendar else { return }
+        Task.detached {
+            let text = kind == .contacts ? reader.vCard() : reader.iCalendar()
+            let out = Exporter.uniqueURL(for: folder.appendingPathComponent(kind == .contacts ? "Contacts.vcf" : "Calendar.ics"))
+            let ok = text.map { (try? $0.write(to: out, atomically: true, encoding: .utf8)) != nil } ?? false
+            await MainActor.run {
+                self.dataMessage = ok ? "Saved \(out.lastPathComponent)." : "Nothing to save."
+                if ok { NSWorkspace.shared.activateFileViewerSelecting([out]) }
+            }
+        }
+    }
+
+    /// Every file listed (all folders), copied out of the backup into one folder.
+    func extractAll(to folder: URL) {
+        guard let data, let reader = dataReader, let kind = dataKind else { return }
+        dataMessage = "Copying…"
+        Task.detached {
+            var written: [URL] = []
+            for g in data.groups {
+                let target = data.groups.count > 1 ? folder.appendingPathComponent(DeviceManager.safeName(g.title)) : folder
+                try? FileManager.default.createDirectory(at: target, withIntermediateDirectories: true)
+                written += reader.extract(g, rows: Array(g.rows.indices), to: target)
+            }
+            let total = data.groups.reduce(0) { $0 + $1.rows.count }
+            let result = written
+            await MainActor.run {
+                self.dataMessage = "Copied \(result.count) of \(total) \(kind == .voiceMemos ? "recordings" : "files")."
+                if let first = result.first { NSWorkspace.shared.activateFileViewerSelecting([first]) }
             }
         }
     }
@@ -290,12 +372,16 @@ struct BackupDataView: View {
 
     private var bar: some View {
         HStack(spacing: 10) {
-            Text(m.dataMessage.isEmpty ? (kind == .files ? (m.dataSelection.isEmpty ? "Select files to copy them out of the backup." : "\(m.dataSelection.count) selected")
+            Text(m.dataMessage.isEmpty ? (kind.hasFiles ? (m.dataSelection.isEmpty ? "Select files to copy them out of the backup." : "\(m.dataSelection.count) selected")
                                                          : "Save as a spreadsheet file that opens in Numbers or Excel.")
                                        : m.dataMessage)
                 .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
-            if kind == .files {
+            if kind.hasFiles {
+                if kind != .files {
+                    Button { pickFolder("Copy Here") { m.extractAll(to: $0) } } label: { Label("Copy All…", systemImage: "square.and.arrow.down.on.square") }
+                        .buttonStyle(SoftButtonStyle())
+                }
                 Button { pickFolder("Copy Here") { m.extractDataSelection(to: $0) } } label: { Label("Copy \(m.dataSelection.count) to Mac…", systemImage: "square.and.arrow.down") }
                     .buttonStyle(PrimaryButtonStyle()).disabled(m.dataSelection.isEmpty)
             } else {
@@ -304,9 +390,21 @@ struct BackupDataView: View {
                         .buttonStyle(SoftButtonStyle())
                 }
                 if kind == .messages || kind == .whatsapp {
-                    Button { pickFolder("Save Here") { m.saveWebPage(to: $0) } } label: { Label("Save as Web Page…", systemImage: "doc.richtext") }
-                        .buttonStyle(SoftButtonStyle()).disabled(m.dataGroup == nil)
-                        .help("A page you can open in any browser, with the photos and files from this chat")
+                    Menu {
+                        Button("This Chat as a Web Page…") { pickFolder("Save Here") { m.saveWebPage(to: $0) } }.disabled(m.dataGroup == nil)
+                        Button("This Chat as a PDF…") { pickFolder("Save Here") { m.saveChatPDF(to: $0) } }.disabled(m.dataGroup == nil)
+                        Divider()
+                        Button("Every Chat as Web Pages…") { pickFolder("Save Here") { m.saveEveryChat(to: $0) } }
+                    } label: { Label("Save Chat As", systemImage: "doc.richtext") }
+                    .menuStyle(.borderlessButton).fixedSize()
+                    .help("Web pages open in any browser with the chat's photos and files; PDFs are ready to print or share")
+                }
+                if kind == .contacts || kind == .calendar {
+                    Button { pickFolder("Save Here") { m.saveStandardFile(to: $0) } } label: {
+                        Label(kind == .contacts ? "Save as vCard…" : "Save as Calendar File…", systemImage: kind == .contacts ? "person.crop.rectangle.stack" : "calendar.badge.plus")
+                    }
+                    .buttonStyle(SoftButtonStyle())
+                    .help(kind == .contacts ? "One .vcf file that Contacts, Outlook, Gmail and Android can import" : "One .ics file for Calendar, Outlook or Google Calendar")
                 }
                 Button { pickFolder("Save Here") { m.saveSpreadsheets(all: false, to: $0) } } label: { Label("Save This…", systemImage: "square.and.arrow.down") }
                     .buttonStyle(PrimaryButtonStyle()).disabled(m.dataGroup == nil)

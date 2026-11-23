@@ -11,7 +11,26 @@ window.addEventListener('unhandledrejection', (e) => {
 
 // MARK: start
 
-api.on('state', (s) => { state = s; drawTopBar(); drawMain(false); });
+api.on('state', (s) => { state = s; drawTopBar(); drawMain(false); autoHops(s); });
+
+// Saved hops marked to run by themselves: once each time their device is plugged in, one after another.
+let autoRanFor = null;
+async function autoHops(s) {
+  if (s.phase === 'noDevice') { autoRanFor = null; return; }
+  if (s.phase !== 'ready' || !s.device || s.device.kind === 'android' || autoRanFor === s.device.udid || live.export || api.test) return;
+  autoRanFor = s.device.udid;
+  for (const p of await api.call('presets:auto')) {
+    if (live.export) break;
+    const r = await runExport({ title: p.title }, { album: p.albumID, filter: 'all', search: '', sort: 'date', ascending: false }, null, p.dest,
+      { ...p.options, skipExisting: true, albumName: p.title }, true);
+    if (r && (r.copied || r.failures.length)) {
+      api.call('notify', r.failures.length ? { title: `${p.name} needs a look`, body: `${count(r.copied)} copied, ${count(r.failures.length)} could not be copied.` }
+        : { title: `Copied ${plural(r.copied, 'new item')}`, body: `${p.name} · ${p.dest.split(/[\\/]/).filter(Boolean).pop()}` });
+    }
+  }
+  // Then the daily backup, when it is turned on and due.
+  if (!live.export && await api.call('backup:autoDue')) { pendingAutoBackup = true; go('nav_backup'); }
+}
 api.on('export:progress', (p) => { if (live.export) { live.export = p; updateLive(); } });
 api.on('files:progress', (t) => filesProgress && filesProgress(t));
 api.on('backup:progress', (p) => backupProgress && backupProgress(p));

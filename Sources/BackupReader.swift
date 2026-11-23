@@ -24,7 +24,7 @@ struct BackupData {
 }
 
 enum BackupKind: String, CaseIterable, Identifiable {
-    case messages, whatsapp, contacts, notes, calendar, calls, safari, files
+    case messages, whatsapp, contacts, notes, calendar, calls, safari, photos, voiceMemos, files
     var id: String { rawValue }
     var title: String {
         switch self {
@@ -35,6 +35,8 @@ enum BackupKind: String, CaseIterable, Identifiable {
         case .calendar: return "Calendar"
         case .calls: return "Call Log"
         case .safari: return "Safari"
+        case .photos: return "Photos & Videos"
+        case .voiceMemos: return "Voice Memos"
         case .files: return "Backup Files"
         }
     }
@@ -47,6 +49,8 @@ enum BackupKind: String, CaseIterable, Identifiable {
         case .calendar: return "calendar"
         case .calls: return "phone.fill"
         case .safari: return "safari.fill"
+        case .photos: return "photo.on.rectangle.angled"
+        case .voiceMemos: return "waveform"
         case .files: return "archivebox.fill"
         }
     }
@@ -54,6 +58,7 @@ enum BackupKind: String, CaseIterable, Identifiable {
         switch self {
         case .messages, .whatsapp: return "conversations"
         case .files: return "areas"
+        case .photos: return "folders"
         default: return "lists"
         }
     }
@@ -141,12 +146,13 @@ final class BackupReader {
         return .ready(BackupReader(folder: folder, manifest: m, temp: temp, keys: keys))
     }
 
-    private static let tempPrefix = "iPhoneAlbumExtractor2-bk-"
+    private static let tempPrefix = "PortHop-bk-"
+    private static let legacyTempPrefixes = ["iPhoneAlbumExtractor2-bk-"]
     private static func newTemp() -> URL { FileManager.default.temporaryDirectory.appendingPathComponent(tempPrefix + UUID().uuidString, isDirectory: true) }
     /// Removes decrypted working copies left behind by an earlier run.
     static func purgeTemp() {
         let dir = FileManager.default.temporaryDirectory
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(tempPrefix) {
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where name.hasPrefix(tempPrefix) || legacyTempPrefixes.contains(where: { name.hasPrefix($0) }) {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
         }
     }
@@ -285,6 +291,8 @@ final class BackupReader {
         case .calendar: data = calendar()
         case .calls: data = calls()
         case .safari: data = safari()
+        case .photos: data = photos()
+        case .voiceMemos: data = voiceMemos()
         case .files: data = files()
         }
         if data.groups.allSatisfy({ $0.rows.isEmpty }) && data.note.isEmpty {
@@ -395,12 +403,75 @@ final class BackupReader {
         guard let title = ["ZTITLE1", "ZTITLE"].first(where: cols.contains) else { return BackupData() }
         let snippet = cols.contains("ZSNIPPET") ? "COALESCE(ZSNIPPET,'')" : "''"
         let modified = ["ZMODIFICATIONDATE1", "ZMODIFICATIONDATE"].first(where: cols.contains) ?? "0"
-        let live = cols.contains("ZMARKEDFORDELETION") ? "AND COALESCE(ZMARKEDFORDELETION, 0) = 0" : ""
-        var g = DataGroup(id: 0, title: "All Notes", columns: ["Title", "Beginning of the note", "Last changed"])
-        db.each("SELECT \(title), \(snippet), \(modified) FROM ZICCLOUDSYNCINGOBJECT WHERE \(title) IS NOT NULL \(live) ORDER BY 3 DESC") { s in
-            g.rows.append([SQLiteFile.text(s, 0), SQLiteFile.text(s, 1), BackupReader.date(sqlite3_column_double(s, 2))])
+        let live = cols.contains("ZMARKEDFORDELETION") ? "AND COALESCE(n.ZMARKEDFORDELETION, 0) = 0" : ""
+        // The whole text is in ZICNOTEDATA.ZDATA (compressed); some layouts point from the note to it, others back.
+        let dataCols = db.columns("ZICNOTEDATA")
+        let join = !dataCols.contains("ZDATA") ? "" : (cols.contains("ZNOTEDATA") ? "LEFT JOIN ZICNOTEDATA d ON d.Z_PK = n.ZNOTEDATA"
+            : (dataCols.contains("ZNOTE") ? "LEFT JOIN ZICNOTEDATA d ON d.ZNOTE = n.Z_PK" : ""))
+        let preview = snippet.replacingOccurrences(of: "ZSNIPPET", with: "n.ZSNIPPET")
+        let changed = modified == "0" ? "0" : "n." + modified
+        var g = DataGroup(id: 0, title: "All Notes", columns: ["Title", "Text", "Last changed"])
+        db.each("SELECT n.\(title), \(preview), \(changed), \(join.isEmpty ? "NULL" : "d.ZDATA") FROM ZICCLOUDSYNCINGOBJECT n \(join) WHERE n.\(title) IS NOT NULL \(live) ORDER BY 3 DESC") { s in
+            let full = SQLiteFile.data(s, 3).flatMap(BackupReader.noteText)
+            g.rows.append([SQLiteFile.text(s, 0), full ?? SQLiteFile.text(s, 1), BackupReader.date(sqlite3_column_double(s, 2))])
         }
         return BackupData(groups: [g])
+    }
+
+    /// Note text from ZICNOTEDATA.ZDATA: gzip-compressed protobuf, the text at NoteStoreProto.document(2).note(3).note_text(2).
+    /// Locked notes stay unreadable (they are encrypted on the device) and fall back to the short preview.
+    static func noteText(_ blob: Data) -> String? {
+        guard let raw = inflate(blob), let doc = protoField(raw, 2), let note = protoField(doc, 3), let text = protoField(note, 2) else { return nil }
+        return String(data: text, encoding: .utf8)
+    }
+
+    static func inflate(_ d: Data) -> Data? {
+        let b = [UInt8](d)
+        let body: Data
+        if b.count > 18, b[0] == 0x1f, b[1] == 0x8b {   // gzip: skip the header's optional parts, drop the 8-byte trailer
+            let flags = b[3]
+            var o = 10
+            if flags & 4 != 0, o + 2 <= b.count { o += 2 + (Int(b[o]) | Int(b[o + 1]) << 8) }
+            if flags & 8 != 0 { while o < b.count, b[o] != 0 { o += 1 }; o += 1 }
+            if flags & 16 != 0 { while o < b.count, b[o] != 0 { o += 1 }; o += 1 }
+            if flags & 2 != 0 { o += 2 }
+            guard o < b.count - 8 else { return nil }
+            body = Data(b[o..<(b.count - 8)])
+        } else if b.count > 6, b[0] == 0x78 {             // zlib
+            body = Data(b[2..<(b.count - 4)])
+        } else { return nil }
+        return try? (body as NSData).decompressed(using: .zlib) as Data
+    }
+
+    /// The first length-delimited field `number` in a protobuf message.
+    static func protoField(_ d: Data, _ number: Int) -> Data? {
+        let b = [UInt8](d)
+        var o = 0
+        func varint() -> UInt64? {
+            var v: UInt64 = 0, shift: UInt64 = 0
+            while o < b.count {
+                let x = b[o]; o += 1
+                v |= UInt64(x & 0x7f) << shift
+                if x & 0x80 == 0 { return v }
+                shift += 7
+                if shift > 63 { return nil }
+            }
+            return nil
+        }
+        while o < b.count {
+            guard let key = varint() else { return nil }
+            switch key & 7 {
+            case 0: guard varint() != nil else { return nil }
+            case 1: o += 8
+            case 2:
+                guard let len = varint(), len <= UInt64(b.count - o) else { return nil }
+                if Int(key >> 3) == number { return Data(b[o..<(o + Int(len))]) }
+                o += Int(len)
+            case 5: o += 4
+            default: return nil
+            }
+        }
+        return nil
     }
 
     private func calendar() -> BackupData {
@@ -454,6 +525,121 @@ final class BackupReader {
             groups.append(g)
         }
         return BackupData(groups: groups.filter { !$0.rows.isEmpty })
+    }
+
+    /// Photos and videos in the camera roll part of the backup, by device folder (100APPLE…). Useful when the phone is gone.
+    private func photos() -> BackupData {
+        var groups: [DataGroup] = []
+        var index: [String: Int] = [:]
+        manifest.each("SELECT relativePath, fileID FROM Files WHERE domain = 'CameraRollDomain' AND flags = 1 AND relativePath LIKE 'Media/DCIM/%' ORDER BY relativePath") { s in
+            let path = SQLiteFile.text(s, 0) as NSString
+            let folder = (path.deletingLastPathComponent as NSString).lastPathComponent
+            if index[folder] == nil {
+                index[folder] = groups.count
+                groups.append(DataGroup(id: groups.count, title: folder, subtitle: "Camera roll", columns: ["File", "Kind"]))
+            }
+            let ext = path.pathExtension.uppercased()
+            let kind = ["MOV", "MP4", "M4V"].contains(ext) ? "Video" : (ext == "AAE" ? "Edit settings" : "Photo")
+            groups[index[folder]!].rows.append([path.lastPathComponent, kind])
+            groups[index[folder]!].fileIDs.append(SQLiteFile.text(s, 1))
+        }
+        return BackupData(groups: groups)
+    }
+
+    /// Voice Memos: the recordings list (newer iOS keeps it in the app's shared group, older iOS in Media) and the audio files.
+    private func voiceMemos() -> BackupData {
+        let places: [(domain: String, db: String, table: String, folder: String)] = [
+            ("AppDomainGroup-group.com.apple.VoiceMemos.shared", "Recordings/CloudRecordings.db", "ZCLOUDRECORDING", "Recordings/"),
+            ("MediaDomain", "Media/Recordings/Recordings.db", "ZRECORDING", "Media/Recordings/")]
+        var g = DataGroup(id: 0, title: "All Recordings", columns: ["File", "Recorded", "Length"])
+        var used = Set<String>()
+        for p in places {
+            guard let db = database(domain: p.domain, path: p.db) else { continue }
+            let cols = db.columns(p.table)
+            guard cols.contains("ZPATH") else { continue }
+            let names = ["ZCUSTOMLABEL", "ZENCRYPTEDTITLE"].filter(cols.contains).map { "NULLIF(TRIM(\($0)), '')" }
+            let title = names.isEmpty ? "NULL" : (names.count == 1 ? names[0] : "COALESCE(\(names.joined(separator: ", ")))")
+            let when = cols.contains("ZDATE") ? "ZDATE" : "0", length = cols.contains("ZDURATION") ? "ZDURATION" : "0"
+            db.each("SELECT \(title), ZPATH, \(when), \(length) FROM \(p.table) ORDER BY 3 DESC") { s in
+                let stored = SQLiteFile.text(s, 1)
+                let file = (stored as NSString).lastPathComponent
+                guard !file.isEmpty, let id = fileID(domain: p.domain, path: p.folder + file) else { return }
+                let ext = (file as NSString).pathExtension.isEmpty ? "m4a" : (file as NSString).pathExtension
+                var label = SQLiteFile.text(s, 0)
+                if label.isEmpty { label = (file as NSString).deletingPathExtension }
+                var name = Pattern.safe(label) + "." + ext
+                if used.contains(name.lowercased()) { name = Pattern.safe(label) + " " + String(id.prefix(6)) + "." + ext }
+                used.insert(name.lowercased())
+                let secs = Int(sqlite3_column_double(s, 3).rounded())
+                g.rows.append([name, BackupReader.date(sqlite3_column_double(s, 2)), String(format: "%d:%02d", secs / 60, secs % 60)])
+                g.fileIDs.append(id)
+            }
+        }
+        return BackupData(groups: [g])
+    }
+
+    // MARK: Standard formats
+
+    /// The contact list as a vCard 3.0 file, which Contacts, Outlook, Gmail and Android all import.
+    func vCard() -> String? {
+        guard let db = database(domain: "HomeDomain", path: "Library/AddressBook/AddressBook.sqlitedb") else { return nil }
+        var phones: [Int64: [String]] = [:], mails: [Int64: [String]] = [:]
+        db.each("SELECT record_id, property, value FROM ABMultiValue WHERE property IN (3, 4) AND value IS NOT NULL") { s in
+            let id = sqlite3_column_int64(s, 0)
+            if sqlite3_column_int(s, 1) == 3 { phones[id, default: []].append(SQLiteFile.text(s, 2)) } else { mails[id, default: []].append(SQLiteFile.text(s, 2)) }
+        }
+        var out = ""
+        db.each("SELECT ROWID, COALESCE(First,''), COALESCE(Last,''), COALESCE(Organization,'') FROM ABPerson ORDER BY ROWID") { s in
+            let id = sqlite3_column_int64(s, 0)
+            let first = SQLiteFile.text(s, 1), last = SQLiteFile.text(s, 2), org = SQLiteFile.text(s, 3)
+            let full = [first, last].filter { !$0.isEmpty }.joined(separator: " ")
+            var card = ["BEGIN:VCARD", "VERSION:3.0", "N:\(BackupReader.vEsc(last));\(BackupReader.vEsc(first));;;", "FN:\(BackupReader.vEsc(full.isEmpty ? org : full))"]
+            if !org.isEmpty { card.append("ORG:\(BackupReader.vEsc(org))") }
+            card += (phones[id] ?? []).map { "TEL;TYPE=VOICE:\(BackupReader.vEsc($0))" }
+            card += (mails[id] ?? []).map { "EMAIL;TYPE=INTERNET:\(BackupReader.vEsc($0))" }
+            card.append("END:VCARD")
+            out += card.map(BackupReader.fold).joined(separator: "\r\n") + "\r\n"
+        }
+        return out.isEmpty ? nil : out
+    }
+
+    /// The calendars as one iCalendar (.ics) file for Calendar, Outlook or Google Calendar.
+    func iCalendar() -> String? {
+        guard let db = database(domain: "HomeDomain", path: "Library/Calendar/Calendar.sqlitedb") else { return nil }
+        let utc = DateFormatter(); utc.locale = Locale(identifier: "en_US_POSIX"); utc.timeZone = TimeZone(identifier: "UTC"); utc.dateFormat = "yyyyMMdd'T'HHmmss'Z'"
+        let day = DateFormatter(); day.locale = Locale(identifier: "en_US_POSIX"); day.timeZone = TimeZone(identifier: "UTC"); day.dateFormat = "yyyyMMdd"
+        var lines = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//PortHop//Backup export//EN", "CALSCALE:GREGORIAN"]
+        let stamp = utc.string(from: Date())
+        let sql = "SELECT i.ROWID, COALESCE(i.summary,''), i.start_date, i.end_date, COALESCE(i.all_day, 0), COALESCE(c.title,'Calendar') "
+            + "FROM CalendarItem i LEFT JOIN Calendar c ON c.ROWID = i.calendar_id ORDER BY i.start_date"
+        db.each(sql) { s in
+            let start = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(s, 2))
+            let end = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(s, 3))
+            let allDay = sqlite3_column_int(s, 4) != 0
+            lines += ["BEGIN:VEVENT", "UID:porthop-\(sqlite3_column_int64(s, 0))@backup", "DTSTAMP:\(stamp)",
+                      allDay ? "DTSTART;VALUE=DATE:\(day.string(from: start))" : "DTSTART:\(utc.string(from: start))",
+                      allDay ? "DTEND;VALUE=DATE:\(day.string(from: max(end, start.addingTimeInterval(86_400))))" : "DTEND:\(utc.string(from: max(end, start)))",
+                      "SUMMARY:\(BackupReader.vEsc(SQLiteFile.text(s, 1)))", "CATEGORIES:\(BackupReader.vEsc(SQLiteFile.text(s, 5)))", "END:VEVENT"]
+        }
+        guard lines.count > 4 else { return nil }
+        lines.append("END:VCALENDAR")
+        return lines.map(BackupReader.fold).joined(separator: "\r\n") + "\r\n"
+    }
+
+    static func vEsc(_ s: String) -> String {
+        s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: ";", with: "\\;").replacingOccurrences(of: ",", with: "\\,")
+            .replacingOccurrences(of: "\r\n", with: "\\n").replacingOccurrences(of: "\n", with: "\\n")
+    }
+
+    /// Long lines are folded at 75 bytes, as vCard and iCalendar require.
+    static func fold(_ line: String) -> String {
+        var out = "", width = 0
+        for ch in line {
+            let n = String(ch).utf8.count
+            if width + n > 75 { out += "\r\n "; width = 1 }
+            out.append(ch); width += n
+        }
+        return out
     }
 
     private func files() -> BackupData {

@@ -12,7 +12,8 @@ function shoresView() {
   const albums = isAndroid()
     ? (s.androidAlbums || []).map((a) => ({ id: 'android:' + a.path, title: a.name, icon: 'album', color: '#5aa2ff', count: a.count, bytes: a.bytes, path: a.path, compact: true }))
     : s.user.map((a) => ({ id: a.id, title: a.title, icon: 'album', color: '#5aa2ff', count: a.count, bytes: a.bytes, compact: true }));
-  const all = [...piles, ...albums];
+  const people = isAndroid() ? [] : (s.people || []).map((a) => ({ id: a.id, title: a.title, icon: 'person', color: '#b07cff', count: a.count, bytes: a.bytes, compact: true }));
+  const all = [...piles, ...albums, ...people];
 
   const left = h('div', { class: 'shore' },
     deviceHero(),
@@ -20,6 +21,7 @@ function shoresView() {
     h('div', { class: 'piles' }, piles.map(pileCard)),
     isAndroid() ? h('button', { class: 'btn', style: 'align-self:flex-start', onclick: () => go('nav_files') }, icon('folder'), 'Browse all storage') : null,
     albums.length ? [h('div', { class: 'label' }, 'Your albums'), h('div', { class: 'piles' }, albums.map(pileCard))] : null,
+    people.length ? [h('div', { class: 'label' }, 'People'), h('div', { class: 'piles' }, people.map(pileCard))] : null,
     s.apps.length ? [h('div', { class: 'label' }, 'Send files to apps'), h('div', { class: 'chips' }, s.apps.map((a) => h('button', { class: 'chip', onclick: () => go('app:' + a.id) }, a.name)))] : null,
     h('div', { class: 'hint' }, isAndroid() ? 'Drop files here to send them to the Download folder.'
       : `Click a group to look inside. Drag it across to copy it.${s.apps.length ? ' Drop files here to send them to an app.' : ''}`));
@@ -163,12 +165,14 @@ function hopsBlock() {
     box.replaceChildren(...(list.length ? [h('div', { class: 'label', style: 'margin-top:8px' }, 'Your hops'), ...list.map((p) => {
       const ready = p.onDevice && p.reachable;
       return h('div', { class: 'hop-row' },
-        h('span', { class: 'tile big shape-cookie6' }, icon('refresh')),
+        h('span', { class: 'tile big shape-cookie6' }, icon(p.auto ? 'bolt' : 'refresh')),
         h('div', { class: 'hop-text' }, h('b', {}, p.name),
-          h('small', {}, !p.onDevice ? `Not on this ${kindWord()}` : !p.reachable ? 'Folder not connected' : `${count(p.count)} items · copies only what's new`)),
+          h('small', {}, !p.onDevice ? `Not on this ${kindWord()}` : !p.reachable ? 'Folder not connected' : `${count(p.count)} items · ${p.auto ? 'runs when plugged in' : "copies only what's new"}`)),
+        h('button', { class: 'tb-btn' + (p.auto ? ' on' : ''), title: p.auto ? 'Runs by itself when this device is plugged in. Click to stop that.' : 'Run by itself whenever this device is plugged in',
+          onclick: async () => { await api.call('presets:setAuto', { id: p.id, on: !p.auto }); draw(); } }, icon('bolt')),
         h('button', { class: 'tb-btn', title: 'Remove this hop', onclick: async () => { await api.call('presets:delete', p.id); draw(); } }, icon('trash')),
         h('button', { class: 'btn primary', disabled: !ready || !!live.export, title: 'Hop now', onclick: () =>
-          runExport({ title: p.title }, { album: p.albumID, filter: 'all', search: '', sort: 'date', ascending: false }, null, p.dest, { ...p.options, skipExisting: true }) }, icon('arrow')));
+          runExport({ title: p.title }, { album: p.albumID, filter: 'all', search: '', sort: 'date', ascending: false }, null, p.dest, { ...p.options, skipExisting: true, albumName: p.title }) }, icon('arrow')));
     })] : []));
   };
   draw();

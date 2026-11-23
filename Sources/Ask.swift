@@ -31,6 +31,8 @@ struct AskContext {
     var albums: [(id: String, title: String)] = []
     /// The person's own albums, matched by name in the request.
     var userAlbums: [(id: String, title: String)] = []
+    /// People named in Photos ("photos of Mum"), matched as whole words.
+    var people: [(id: String, title: String)] = []
     var destinations: [Destination] = []
 }
 
@@ -72,7 +74,7 @@ enum AskParser {
         let routes: [(String, [String])] = [
             ("bk:whatsapp", ["whatsapp"]), ("bk:messages", ["message", "imessage", " sms", "texts"]), ("bk:contacts", ["contact"]),
             ("bk:notes", [" note"]), ("bk:calendar", ["calendar", "event"]), ("bk:calls", ["call log", "calls", "call history"]),
-            ("bk:safari", ["safari", "bookmark", "browsing"]), ("nav_backup", ["back up", "backup", "restore"]),
+            ("bk:safari", ["safari", "bookmark", "browsing"]), ("bk:voiceMemos", ["voice memo", "recording"]), ("nav_backup", ["back up", "backup", "restore"]),
             ("nav_device", ["battery", "health", "storage", "serial", "imei", "details"]), ("nav_files", ["files", "apps", "documents"])]
 
         // Which group of photos.
@@ -80,7 +82,14 @@ enum AskParser {
             ("smart_hidden", ["hidden"]), ("smart_screenshots", ["screenshot"]), ("smart_favorites", ["favorite", "favourite"]),
             ("smart_selfies", ["selfie"]), ("smart_live", ["live photo"]), ("smart_trashed", ["deleted", "trash"]),
             ("smart_all", ["everything", "all photos", "library", "all my"])]
-        if !c.isAndroid {
+        // A person comes first ("favourite videos of Mum"); smart words then narrow it down where they can.
+        if !c.isAndroid, let p = c.people.first(where: { $0.title.count >= 2 && mentions(body, $0.title.lowercased()) }) {
+            i.album = p.id
+            if says("favorite", "favourite") { i.filter = .favorites }
+            else if says("screenshot") { i.filter = .screenshots }
+            else if says("live photo") { i.filter = .live }
+        }
+        if !c.isAndroid && i.album == nil {
             for (id, words) in albumWords where words.contains(where: { body.contains($0) }) { i.album = id; break }
             if i.album == nil, let a = c.userAlbums.first(where: { $0.title.count >= 3 && body.contains($0.title.lowercased()) }) { i.album = a.id }
         }
@@ -156,6 +165,11 @@ enum AskParser {
         case "nav_files": return c.isAndroid ? "Phone Storage" : "Media Files"
         default: return BackupKind(rawValue: String(r.dropFirst(3)))?.title ?? r
         }
+    }
+
+    /// The name as a whole word: "mum" is in "photos of mum" but not in "mumbai".
+    private static func mentions(_ body: String, _ name: String) -> Bool {
+        body.range(of: "(?<![\\p{L}\\p{N}])" + NSRegularExpression.escapedPattern(for: name) + "(?![\\p{L}\\p{N}])", options: .regularExpression) != nil
     }
 
     private static func matches(_ pattern: String, in s: String) -> [String] {

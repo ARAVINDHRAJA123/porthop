@@ -21,11 +21,18 @@ function parseAsk(raw) {
   }
   const says = (...w) => w.some((x) => body.includes(x));
   const routes = [['bk:whatsapp', ['whatsapp']], ['bk:messages', ['message', 'imessage', ' sms', 'texts']], ['bk:contacts', ['contact']], ['bk:notes', [' note']],
-    ['bk:calendar', ['calendar', 'event']], ['bk:calls', ['call log', 'calls', 'call history']], ['bk:safari', ['safari', 'bookmark', 'browsing']],
+    ['bk:calendar', ['calendar', 'event']], ['bk:calls', ['call log', 'calls', 'call history']], ['bk:safari', ['safari', 'bookmark', 'browsing']], ['bk:voiceMemos', ['voice memo', 'recording']],
     ['nav_backup', ['back up', 'backup', 'restore']], ['nav_device', ['battery', 'health', 'storage', 'serial', 'imei', 'details']], ['nav_files', ['files', 'apps', 'documents']]];
   const albums = [['smart_hidden', ['hidden']], ['smart_screenshots', ['screenshot']], ['smart_favorites', ['favorite', 'favourite']], ['smart_selfies', ['selfie']],
     ['smart_live', ['live photo']], ['smart_trashed', ['deleted', 'trash']], ['smart_all', ['everything', 'all photos', 'library', 'all my']]];
-  if (!isAndroid()) {
+  // A person comes first ("favourite videos of Mum"); smart words then narrow it down where they can.
+  const mentions = (name) => new RegExp('(?<![\\p{L}\\p{N}])' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\p{L}\\p{N}])', 'u').test(body);
+  const person = isAndroid() ? null : (state.people || []).find((p) => p.title.length >= 2 && mentions(p.title.toLowerCase()));
+  if (person) {
+    i.album = person.id;
+    if (says('favorite', 'favourite')) i.filter = 'favorites'; else if (says('screenshot')) i.filter = 'screenshots'; else if (says('live photo')) i.filter = 'live';
+  }
+  if (!isAndroid() && !i.album) {
     for (const [id, w] of albums) if (says(...w)) { i.album = id; break; }
     if (!i.album) { const a = state.user.find((x) => x.title.length >= 3 && body.includes(x.title.toLowerCase())); if (a) i.album = a.id; }
   }
@@ -55,7 +62,7 @@ function parseAsk(raw) {
   }
   if (photoRequest && !i.album && !isAndroid()) i.album = 'smart_all';
   if (i.route) i.parts.push(i.route.startsWith('bk:') ? DATA_KINDS.find((k) => 'bk:' + k[0] === i.route)[1] : { nav_backup: 'Backups', nav_device: 'Device details', nav_files: isAndroid() ? 'Phone storage' : 'Media files' }[i.route]);
-  if (i.album) i.parts.push([...state.smart, ...state.user].find((a) => a.id === i.album)?.title || 'Library');
+  if (i.album) i.parts.push([...state.smart, ...state.user, ...(state.people || [])].find((a) => a.id === i.album)?.title || 'Library');
   if (i.filter) i.parts.push(FILTERS.find((f) => f[0] === i.filter)[1]);
   if (i.from != null) i.parts.push(rangeText(i.from, i.to));
   if (i.minBytes) i.parts.push('over ' + bytes(i.minBytes));

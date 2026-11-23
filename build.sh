@@ -7,6 +7,10 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 swiftc -swift-version 5 -O -target arm64-apple-macos13.0 -parse-as-library \
   Sources/*.swift -lsqlite3 -o "$APP/Contents/MacOS/PortHop"
+# The porthop command line: the same engine, in Helpers (next to the tools it drives).
+mkdir -p "$APP/Contents/Helpers"
+swiftc -swift-version 5 -O -target arm64-apple-macos13.0 Sources/Models.swift Sources/Device.swift Sources/Catalog.swift Sources/Exporter.swift \
+  Sources/Backup.swift Sources/Android.swift Sources/LocationScrubber.swift CLI/main.swift -lsqlite3 -o "$APP/Contents/Helpers/porthop"
 cp Info.plist "$APP/Contents/Info.plist"
 if [ ! -f AppIcon.icns ]; then Icon/make_icons.sh; fi
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"

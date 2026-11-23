@@ -6,6 +6,8 @@ struct BackupView: View {
     @State private var volumes: [VolumeInfo] = []
     @State private var freeBytes: Int64? = nil
     @State private var restoreTarget: BackupEntry?
+    @AppStorage("autoBackup") private var autoBackup = false
+    @AppStorage("keepSnapshots") private var keepSnapshots = true
     @State private var confirmStopRestore = false
 
     private var usedOnDevice: Int64 { max(0, m.details.totalDiskBytes - m.details.freeDiskBytes) }
@@ -116,6 +118,12 @@ struct BackupView: View {
                                 }
                             }
                             Spacer()
+                            VStack(alignment: .trailing, spacing: 3) {
+                                Toggle("Back up when plugged in, once a day", isOn: $autoBackup).toggleStyle(.switch).controlSize(.mini)
+                                Toggle("Keep earlier versions", isOn: $keepSnapshots).toggleStyle(.switch).controlSize(.mini)
+                                    .help("Before each backup the previous one is kept as a snapshot. On APFS drives this takes almost no space; the newest 7 are kept.")
+                            }
+                            .font(.caption)
                             Button { m.startBackup() } label: { Label("Back Up Now", systemImage: "arrow.down.circle.fill") }
                                 .buttonStyle(PrimaryButtonStyle())
                                 .disabled(m.isExporting || m.afcBusy || m.tools?.backup == nil)
@@ -149,7 +157,7 @@ struct BackupView: View {
                             HStack(spacing: 12) {
                                 IconTile(symbol: b.deviceName.lowercased().contains("ipad") ? "ipad" : "iphone", color: .blue, size: 32)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(b.deviceName).font(.system(size: 13, weight: .semibold))
+                                    Text(b.isSnapshot ? "\(b.deviceName) · earlier version" : b.deviceName).font(.system(size: 13, weight: .semibold))
                                     Text([b.date.map { Fmt.date.string(from: $0) } ?? "Date unknown",
                                           b.iosVersion.isEmpty ? nil : "iOS \(b.iosVersion)",
                                           b.encrypted ? "Encrypted" : nil].compactMap { $0 }.joined(separator: " · "))

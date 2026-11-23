@@ -95,6 +95,31 @@ function loadCatalog(dbPath) {
       }
     }
     user.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: 'base' }));
+    // People the person has named in Photos. Older and newer iOS name the face columns differently.
+    const people = [];
+    if (hasTable('ZPERSON') && hasTable('ZDETECTEDFACE')) {
+      const pc = columns('ZPERSON'), fc = columns('ZDETECTEDFACE');
+      const assetCol = ['ZASSETFORFACE', 'ZASSET'].find((c) => fc.has(c)), personCol = ['ZPERSONFORFACE', 'ZPERSON'].find((c) => fc.has(c));
+      const names = ['ZDISPLAYNAME', 'ZFULLNAME'].filter((c) => pc.has(c)).map((c) => `NULLIF(TRIM(p.${c}), '')`);
+      if (assetCol && personCol && names.length) {
+        const name = names.length === 1 ? names[0] : `COALESCE(${names.join(', ')})`;
+        let rows = [];
+        try { rows = db.prepare(`SELECT ${name} title, f.${assetCol} asset FROM ZDETECTEDFACE f JOIN ZPERSON p ON p.Z_PK = f.${personCol} WHERE ${name} IS NOT NULL`).all(); } catch {}
+        const map = new Map();
+        for (const r of rows) {
+          const a = byPK.get(Number(r.asset));
+          if (!a || a.isTrashed || a.isHidden) continue;
+          const title = String(r.title), key = title.toLowerCase();
+          if (!map.has(key)) map.set(key, { id: 'person:' + key, title, smart: false, person: true, assets: [], ids: new Set() });
+          const e = map.get(key);
+          if (e.title === e.title.toLowerCase() && title !== title.toLowerCase()) e.title = title;   // prefer "Mum" to "mum"
+          if (!e.ids.has(a.id)) { e.ids.add(a.id); e.assets.push(a); }
+        }
+        // The same person can appear under two records (not yet merged in Photos); one name, one group.
+        for (const e of map.values()) { delete e.ids; e.assets.sort((x, y) => y.ts - x.ts); people.push(e); }
+      }
+    }
+    people.sort((a, b) => b.assets.length - a.assets.length || (a.title < b.title ? -1 : a.title > b.title ? 1 : 0));
     const live = ordered.filter((a) => !a.isTrashed), shown = live.filter((a) => !a.isHidden);
     const smart = (id, title, assets) => ({ id, title, smart: true, assets });
     return {
@@ -104,7 +129,7 @@ function loadCatalog(dbPath) {
         smart('smart_live', 'Live Photos', shown.filter((a) => a.isLivePhoto)), smart('smart_screenshots', 'Screenshots', shown.filter((a) => a.isScreenshot)),
         smart('smart_selfies', 'Selfies', shown.filter((a) => a.isSelfie)), smart('smart_trashed', 'Recently Deleted', ordered.filter((a) => a.isTrashed)),
       ],
-      user, warnings, assetCount: ordered.length,
+      user, people, warnings, assetCount: ordered.length,
     };
   } finally { try { db.close(); } catch {} }
 }

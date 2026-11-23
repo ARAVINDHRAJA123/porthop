@@ -59,5 +59,14 @@ c.execute("UPDATE ZASSET SET ZCLOUDASSETGUID='G100', ZCLOUDLOCALSTATE=0 WHERE Z_
 c.execute("UPDATE ZASSET SET ZCLOUDASSETGUID='G1', ZCLOUDLOCALSTATE=1 WHERE ZFILENAME='IMG_0001.JPG'")
 adj=f"{root}/PhotoData/Mutations/DCIM/100APPLE/IMG_0002/Adjustments"; os.makedirs(adj)
 open(adj+"/FullSizeRender.jpg","wb").write(open(f"{root}/DCIM/100APPLE/IMG_0001.JPG","rb").read()+b"EDITED")
+# People named in Photos (newer iOS column names): Mum twice (one record not merged yet), Ravi by full name only,
+# someone never named, and a face of Mum in a hidden photo, which stays out of her group.
+c.executescript("""
+CREATE TABLE ZPERSON(Z_PK INTEGER PRIMARY KEY, ZDISPLAYNAME TEXT, ZFULLNAME TEXT);
+CREATE TABLE ZDETECTEDFACE(Z_PK INTEGER PRIMARY KEY, ZASSETFORFACE INT, ZPERSONFORFACE INT);
+INSERT INTO ZPERSON VALUES(1,'Mum',NULL),(2,'','Ravi Kumar'),(3,NULL,NULL),(4,'mum','');
+""")
+for i,(asset,person) in enumerate([(37,1),(38,1),(40,1),(40,4),(44,4),(10,1),(39,2),(41,2),(45,2),(38,3),(46,3)]):
+    c.execute("INSERT INTO ZDETECTEDFACE VALUES(?,?,?)",(i+1,asset,person))
 db.commit()
 PY

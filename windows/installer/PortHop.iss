@@ -6,7 +6,7 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\PortHop.iss
 ; The result is installer\Output\PortHop-Setup.exe. To sign it, add a SignTool line (see Inno Setup's [Setup] SignTool).
 
-#define AppVersion "2.0.0"
+#define AppVersion "2.1.0"
 
 [Setup]
 AppId={{774905B6-24BE-40C8-9FC8-8E307EE050FF}

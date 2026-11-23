@@ -227,26 +227,55 @@ enum SubfolderMode: String, CaseIterable, Identifiable {
     case custom = "Custom pattern…"
     var id: String { rawValue }
 
-    static let patternTokens = "{year} {month} {monthName} {day} {album} {folder}"
+    static var patternTokens: String { Pattern.tokens }
 
-    /// The folder a pattern gives for one item, made safe for any drive ("/" separates levels).
-    static func folder(_ pattern: String, _ asset: PhotoAsset, album: String) -> String {
-        let d = asset.dateCreated
-        func fmt(_ f: String) -> String {
-            guard let d else { return "Unknown" }
-            let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = f
-            return df.string(from: d)
-        }
+    /// The folder a pattern gives for one item, made safe for any drive ("/" or "\\" separates levels).
+    static func folder(_ pattern: String, _ asset: PhotoAsset, album: String, device: String = "") -> String {
+        let out = Pattern.render(pattern, asset, album: album, device: device, name: (asset.filename as NSString).deletingPathExtension)
+        return out.split(whereSeparator: { $0 == "/" || $0 == "\\" }).map { Pattern.safe(String($0)) }
+            .filter { !$0.isEmpty && $0 != "." && $0 != ".." }.joined(separator: "/")
+    }
+}
+
+/// Folder and file-name patterns, shared with the Windows edition (Tests/golden/patterns.json checks both).
+enum Pattern {
+    static let tokens = "{year} {month} {monthName} {day} {hour} {minute} {second} {album} {folder} {device} {kind} {name}"
+    private static let formatters: [String: DateFormatter] = Dictionary(uniqueKeysWithValues: ["yyyy", "MM", "MMMM", "dd", "HH", "mm", "ss"].map { f in
+        let df = DateFormatter(); df.locale = Locale(identifier: "en_US_POSIX"); df.dateFormat = f
+        return (f, df)
+    })
+
+    /// Replaces every token; a value never adds a folder level of its own ("/" inside a value becomes "-").
+    static func render(_ pattern: String, _ asset: PhotoAsset, album: String, device: String, name: String) -> String {
+        func date(_ f: String) -> String { asset.dateCreated.map { formatters[f]!.string(from: $0) } ?? "Unknown" }
         let folder = asset.directory.split(separator: "/").last.map(String.init) ?? "DCIM"
+        let kind = asset.isVideo ? "Videos" : (asset.isScreenshot ? "Screenshots" : "Photos")
         var out = pattern
-        for (k, v) in [("{year}", fmt("yyyy")), ("{month}", fmt("MM")), ("{monthName}", fmt("MMMM")), ("{day}", fmt("dd")),
-                       ("{album}", album.isEmpty ? "Photos" : album), ("{folder}", folder)] {
+        for (k, v) in [("{year}", date("yyyy")), ("{month}", date("MM")), ("{monthName}", date("MMMM")), ("{day}", date("dd")),
+                       ("{hour}", date("HH")), ("{minute}", date("mm")), ("{second}", date("ss")),
+                       ("{album}", album.isEmpty ? "Photos" : album), ("{folder}", folder), ("{device}", device.isEmpty ? "iPhone" : device),
+                       ("{kind}", kind), ("{name}", name)] where out.contains(k) {
             out = out.replacingOccurrences(of: k, with: v.replacingOccurrences(of: "/", with: "-"))
         }
-        let parts = out.split(separator: "/").map {
-            $0.replacingOccurrences(of: ":", with: "-").trimmingCharacters(in: .whitespaces)
-        }.filter { !$0.isEmpty && $0 != "." && $0 != ".." }
-        return parts.joined(separator: "/")
+        return out
+    }
+
+    /// One folder or file name, safe on Mac, Windows and exFAT drives alike.
+    static func safe(_ s: String) -> String {
+        var out = String(s.unicodeScalars.map { c -> Character in
+            ("\\/:*?\"<>|".unicodeScalars.contains(c) || c.value < 0x20) ? "-" : Character(c)
+        }).trimmingCharacters(in: .whitespaces)
+        while out.hasSuffix(".") || out.hasSuffix(" ") { out.removeLast() }
+        return out
+    }
+
+    /// The new name (without extension) a file-name pattern gives one item; nil keeps the device's name.
+    static func fileStem(_ pattern: String, _ asset: PhotoAsset, album: String, device: String, original: String) -> String? {
+        let p = pattern.trimmingCharacters(in: .whitespaces)
+        guard !p.isEmpty else { return nil }
+        let s = safe(render(p, asset, album: album, device: device, name: (original as NSString).deletingPathExtension)
+            .replacingOccurrences(of: "/", with: "-"))
+        return s.isEmpty || s == "." || s == ".." ? nil : s
     }
 }
 
@@ -263,6 +292,23 @@ struct ExportOptions {
     var folderPattern = "{year}/{month}"
     /// The group being copied, for {album} in a pattern.
     var albumName = ""
+    /// Renames each copy, e.g. "{year}-{month}-{day} {hour}.{minute}.{second}"; empty keeps the device's names.
+    var namePattern = ""
+    /// Wipes the GPS position from photos and videos as they land (no re-encoding).
+    var removeLocation = false
+    /// Writes "PortHop Reports/<date> <group>.csv" listing what was copied and what was not.
+    var saveReport = true
+    /// For {device} in a pattern.
+    var deviceName = ""
+}
+
+/// One line of a copy report.
+struct ReportLine {
+    enum Status: String { case copied = "Copied", skipped = "Already in the folder", failed = "Failed", cloud = "Only in iCloud", notCopied = "Not copied" }
+    let status: Status
+    let asset: PhotoAsset
+    let savedAs: String
+    let note: String
 }
 
 struct ExportManifestEntry: Codable {
@@ -311,5 +357,7 @@ struct ExportSummary: Identifiable {
     var fatalError: String? = nil
     var bytesCopied: Int64 = 0
     var elapsed: TimeInterval = 0
+    var report: [ReportLine] = []
+    var reportURL: URL? = nil
     var isClean: Bool { failures.isEmpty && !cancelled && !disconnected && !stalled && fatalError == nil }
 }

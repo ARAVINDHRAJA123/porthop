@@ -11,6 +11,8 @@ import AVFoundation
 struct Catalog {
     var smart: [AlbumCategory] = []
     var user: [AlbumCategory] = []
+    /// People named in the Photos app, from its own face recognition, most photographed first.
+    var people: [AlbumCategory] = []
     var warnings: [String] = []
     var assetCount = 0
     var schemaLabel = ""
@@ -150,6 +152,37 @@ enum CatalogReader {
         }
         user.sort { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
 
+        // People the person has named in Photos. Older and newer iOS name the face columns differently.
+        var people: [AlbumCategory] = []
+        if tableExists(db, "ZPERSON"), tableExists(db, "ZDETECTEDFACE") {
+            let pc = columns(db, "ZPERSON"), fc = columns(db, "ZDETECTEDFACE")
+            let names = ["ZDISPLAYNAME", "ZFULLNAME"].filter { pc.contains($0) }.map { "NULLIF(TRIM(p.\($0)), '')" }
+            if let assetCol = ["ZASSETFORFACE", "ZASSET"].first(where: { fc.contains($0) }),
+               let personCol = ["ZPERSONFORFACE", "ZPERSON"].first(where: { fc.contains($0) }), !names.isEmpty {
+                let name = names.count == 1 ? names[0] : "COALESCE(\(names.joined(separator: ", ")))"
+                var s: OpaquePointer?
+                if sqlite3_prepare_v2(db, "SELECT \(name), f.\(assetCol) FROM ZDETECTEDFACE f JOIN ZPERSON p ON p.Z_PK = f.\(personCol) WHERE \(name) IS NOT NULL;", -1, &s, nil) == SQLITE_OK {
+                    var map: [String: (title: String, ids: Set<Int64>, list: [PhotoAsset])] = [:]
+                    while sqlite3_step(s) == SQLITE_ROW {
+                        guard let t = sqlite3_column_text(s, 0), let asset = byPK[sqlite3_column_int64(s, 1)], !asset.isTrashed, !asset.isHidden else { continue }
+                        let title = String(cString: t)
+                        let key = title.lowercased()
+                        var entry = map[key] ?? (title, [], [])
+                        if entry.title == entry.title.lowercased(), title != title.lowercased() { entry.title = title }   // prefer "Mum" to "mum"
+                        if entry.ids.insert(asset.id).inserted { entry.list.append(asset) }
+                        map[key] = entry
+                    }
+                    sqlite3_finalize(s)
+                    // The same person can appear under two records (not yet merged in Photos); one name, one group.
+                    for (key, v) in map {
+                        people.append(AlbumCategory(id: "person:" + key, title: v.title, icon: "person.crop.circle.fill", isSmart: false,
+                                                    assets: v.list.sorted { $0.sortDate > $1.sortDate }))
+                    }
+                }
+            }
+        }
+        people.sort { $0.assets.count != $1.assets.count ? $0.assets.count > $1.assets.count : $0.title < $1.title }
+
         let live = ordered.filter { !$0.isTrashed }
         func smart(_ id: String, _ title: String, _ icon: String, _ items: [PhotoAsset]) -> AlbumCategory {
             AlbumCategory(id: id, title: title, icon: icon, isSmart: true, assets: items)
@@ -168,6 +201,7 @@ enum CatalogReader {
             smart("smart_trashed", "Recently Deleted", "trash.fill", ordered.filter { $0.isTrashed })
         ]
         cat.user = user
+        cat.people = people
         cat.warnings = warnings
         cat.assetCount = ordered.count
         cat.schemaLabel = assetTable

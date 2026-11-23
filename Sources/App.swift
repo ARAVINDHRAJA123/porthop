@@ -26,7 +26,7 @@ struct AlbumExtractorApp: App {
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
         #if UITEST
-        if let a = ProcessInfo.processInfo.environment["IPHONE_UI_APPEARANCE"] { Appearance.apply(a); return }
+        if let a = testEnv("UI_APPEARANCE") { Appearance.apply(a); return }
         #endif
         Appearance.apply()
     }

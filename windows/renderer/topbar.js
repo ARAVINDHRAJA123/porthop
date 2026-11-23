@@ -6,7 +6,9 @@
 const SMART_ICONS = { smart_hidden: ['eye', '#7369ff'], smart_all: ['photo', '#3d8bff'], smart_favorites: ['heart', '#ff6b94'], smart_videos: ['video', '#9e73ff'],
   smart_live: ['live', '#ffa842'], smart_screenshots: ['shot', '#38c7d6'], smart_selfies: ['selfie', '#4dcc85'], smart_trashed: ['trash', '#808ca3'] };
 const DATA_KINDS = [['messages', 'Messages', 'msg', '#3ecf74'], ['whatsapp', 'WhatsApp', 'chats', '#2bbf9d'], ['contacts', 'Contacts', 'person', '#8a8894'], ['notes', 'Notes', 'note', '#e0b000'],
-  ['calendar', 'Calendar', 'cal', '#ff5d5d'], ['calls', 'Call Log', 'call', '#33a9c9'], ['safari', 'Safari', 'globe', '#3b8cff'], ['files', 'Backup Files', 'box', '#a8794f']];
+  ['calendar', 'Calendar', 'cal', '#ff5d5d'], ['calls', 'Call Log', 'call', '#33a9c9'], ['safari', 'Safari', 'globe', '#3b8cff'],
+  ['photos', 'Photos & Videos', 'photo', '#ff6fa8'], ['voiceMemos', 'Voice Memos', 'mic', '#6d6dff'], ['files', 'Backup Files', 'box', '#a8794f']];
+const FILE_KINDS = ['files', 'photos', 'voiceMemos'];   // rows are files that can be copied out of the backup
 const SMART_ORDER = ['smart_hidden', 'smart_all', 'smart_videos', 'smart_screenshots', 'smart_favorites', 'smart_live', 'smart_selfies', 'smart_trashed'];
 const ANDROID_FOLDERS = [['Camera', 'camera', '/sdcard/DCIM'], ['Pictures', 'photo', '/sdcard/Pictures'], ['Download', 'down', '/sdcard/Download'],
   ['Movies', 'video', '/sdcard/Movies'], ['Music', 'music', '/sdcard/Music'], ['Documents', 'file', '/sdcard/Documents']];
@@ -41,6 +43,19 @@ const askInput = h('input', { class: 'ask-input', placeholder: 'Ask PortHop: hid
 const askPanel = h('div', { class: 'ask-panel hidden' });
 const badge = h('button', { id: 'badge', class: 'badge hidden', title: 'See what is copying', onclick: () => go('nav_home') });
 
+async function checkUpdates() {
+  const r = await api.call('update:check');
+  if (r.version) return updateSheet(r);
+  openModal(h('div', { class: 'sheet' }, h('h2', {}, r.error ? 'Couldn’t check for updates' : `PortHop ${r.current} is the latest version`),
+    h('p', { class: 'dim' }, r.error ? r.error : 'There is nothing to update.'), h('div', { class: 'foot' }, h('button', { class: 'btn primary', onclick: closeModal }, 'OK'))));
+}
+function updateSheet(u) {
+  openModal(h('div', { class: 'sheet' }, h('h2', {}, `PortHop ${u.version} is available`),
+    h('p', { class: 'dim', style: 'white-space:pre-wrap;max-height:240px;overflow:auto' }, (u.notes || '').slice(0, 900) || 'A newer version is on GitHub.'),
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: closeModal }, 'Later'),
+      h('button', { class: 'btn primary', onclick: () => { closeModal(); api.call('update:open'); } }, icon('down'), 'Download'))));
+}
+
 function drawTopBar() {
   const s = state, ready = s.phase === 'ready';
   const back = ready && selection !== 'nav_home' ? h('button', { class: 'tb-btn', title: 'Back to Shores', onclick: () => go('nav_home') }, icon('back')) : null;
@@ -50,13 +65,16 @@ function drawTopBar() {
     h('button', { class: 'split-menu', disabled: !ready, title: 'Devices, backups and more', onclick: (e) => { e.currentTarget.classList.add('open'); devicePopover(e.currentTarget); } }, icon('chev')));
   const askWrap = h('div', { class: 'ask' + (ready ? '' : ' off') }, icon('search'), askInput, h('kbd', {}, 'Ctrl K'));
   const settingsBtn = h('button', { class: 'tb-btn', title: 'Settings and licences', onclick: async (e) => {
-    const target = e.currentTarget, now = await api.call('appearance'), wifi = await api.call('wifi');
+    const target = e.currentTarget, now = await api.call('appearance'), wifi = await api.call('wifi'), autoUpdate = await api.call('update:auto');
     const mode = (v, label, ic) => [label, now === v ? 'check' : ic, () => api.call('appearance', v)];
     popover(target, [mode('system', 'Match Windows', 'contrast'), mode('light', 'Light', 'sun'), mode('dark', 'Dark', 'moon'),
       [wifi ? 'Stop finding phones on Wi-Fi' : 'Also find phones on Wi-Fi (slower)', wifi ? 'check' : 'globe', () => api.call('wifi', !wifi)],
+      ['Check for updates…', 'update', checkUpdates], [autoUpdate ? 'Checking for updates weekly' : 'Check for updates weekly', autoUpdate ? 'check' : 'clock', () => api.call('update:auto', !autoUpdate)],
       ['Open-source licences', 'file', () => api.call('licences')], ['PortHop on GitHub', 'globe', () => api.call('github')]]);
   } }, icon('dots'));
-  $('#topbar').replaceChildren(h('div', { class: 'tb-left' }, back, pill), askWrap, h('div', { class: 'tb-right' }, badge, settingsBtn));
+  // A newer release on GitHub shows as a small button.
+  const updateBtn = s.update ? h('button', { class: 'chip update-chip', title: 'A newer PortHop is available', onclick: () => updateSheet(s.update) }, icon('update'), `Update to ${s.update.version}`) : null;
+  $('#topbar').replaceChildren(h('div', { class: 'tb-left' }, back, pill), askWrap, h('div', { class: 'tb-right' }, updateBtn, badge, settingsBtn));
   askInput.disabled = !ready;
   updateLive();
 }

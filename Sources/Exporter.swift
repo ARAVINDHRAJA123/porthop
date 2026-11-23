@@ -35,7 +35,10 @@ final class ExportJob {
 }
 
 enum Exporter {
-    static let manifestName = ".iPhoneAlbumExtractor-manifest.json"
+    static let manifestName = ".porthop-manifest.json"
+    /// What versions before 2.1 called the record and the staging folders; still read, never written.
+    static let legacyManifestName = ".iPhoneAlbumExtractor-manifest.json"
+    static let legacyStagingPrefix = ".iPhoneAlbumExtractor-staging-"
 
     /// Swaps each edited item for its rendered edit when that file is on the device; everything else stays the original.
     static func editedVersions(of assets: [PhotoAsset], device: Device, tools: Tools) -> [PhotoAsset] {
@@ -68,7 +71,7 @@ enum Exporter {
         for e in entries { out[e.sourceRemotePath] = e }
         return out
     }
-    static let stagingPrefix = ".iPhoneAlbumExtractor-staging-"
+    static let stagingPrefix = ".porthop-staging-"
     static var stallLimit: TimeInterval = 75
 
     private struct Pending {
@@ -92,7 +95,7 @@ enum Exporter {
             summary.fatalError = "The folder could not be created: \(error.localizedDescription)"
             return summary
         }
-        for name in (try? fm.contentsOfDirectory(atPath: destination.path)) ?? [] where name.hasPrefix(stagingPrefix) {
+        for name in (try? fm.contentsOfDirectory(atPath: destination.path)) ?? [] where name.hasPrefix(stagingPrefix) || name.hasPrefix(legacyStagingPrefix) {
             try? fm.removeItem(at: destination.appendingPathComponent(name))
         }
         let staging = destination.appendingPathComponent(stagingPrefix + UUID().uuidString, isDirectory: true)
@@ -103,7 +106,9 @@ enum Exporter {
         defer { try? fm.removeItem(at: staging) }
 
         let manifestURL = destination.appendingPathComponent(manifestName)
-        var manifest = Exporter.readManifest(manifestURL)
+        // A folder filled by an earlier version keeps its record under the old name: read both, write the new one.
+        var manifest = Exporter.readManifest(destination.appendingPathComponent(legacyManifestName))
+            .merging(Exporter.readManifest(manifestURL)) { _, new in new }
         func saveManifest() {
             if let data = try? JSONEncoder().encode(manifest) { try? data.write(to: manifestURL, options: .atomic) }
         }
@@ -123,6 +128,9 @@ enum Exporter {
         }
         func fail(_ asset: PhotoAsset, _ reason: String) {
             summary.failures.append(ExportFailure(asset: asset, reason: reason))
+            summary.report.append(asset.isCloudOnly
+                ? ReportLine(status: .cloud, asset: asset, savedAs: "", note: "Stored only in iCloud. Turn off Optimise Storage on the device to copy it.")
+                : ReportLine(status: .failed, asset: asset, savedAs: "", note: reason))
             state.failed += 1
             settledBytes += max(0, asset.fileSize)
         }
@@ -149,13 +157,17 @@ enum Exporter {
                     let sub = asset.directory.split(separator: "/").last.map(String.init) ?? "DCIM"
                     targetDir = destination.appendingPathComponent(sub, isDirectory: true)
                 case .custom:
-                    let sub = SubfolderMode.folder(options.folderPattern, asset, album: options.albumName)
+                    let sub = SubfolderMode.folder(options.folderPattern, asset, album: options.albumName, device: options.deviceName)
                     if !sub.isEmpty { targetDir = destination.appendingPathComponent(sub, isDirectory: true) }
                 }
                 try? fm.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
                 let chosen = (options.useOriginalNames && !asset.originalFilename.isEmpty) ? asset.originalFilename : asset.filename
-                let safeName = URL(fileURLWithPath: chosen).lastPathComponent.replacingOccurrences(of: ":", with: "-")
+                var safeName = URL(fileURLWithPath: chosen).lastPathComponent.replacingOccurrences(of: ":", with: "-")
+                if let stem = Pattern.fileStem(options.namePattern, asset, album: options.albumName, device: options.deviceName, original: chosen) {
+                    let ext = (safeName as NSString).pathExtension
+                    safeName = ext.isEmpty ? stem : stem + "." + ext
+                }
                 guard !safeName.isEmpty, safeName != ".", safeName != "..", safeName != "/" else {
                     fail(asset, "The filename in the catalog is not usable.")
                     continue
@@ -175,6 +187,7 @@ enum Exporter {
                        prev.sourceRemotePath == asset.remotePath, prev.sourceSize == asset.fileSize {
                         let size = AFC.fileSize(destination.appendingPathComponent(prev.exportedPath))
                         if size > 0, size == prev.exportedSize {
+                            summary.report.append(ReportLine(status: .skipped, asset: asset, savedAs: prev.exportedPath, note: ""))
                             state.skipped += 1; summary.skipped += 1
                             settledBytes += max(0, asset.fileSize)
                             continue
@@ -187,6 +200,7 @@ enum Exporter {
                                                             sourceRemotePath: asset.remotePath, sourceSize: asset.fileSize,
                                                             exportedSize: asset.fileSize)
                         reserved.insert(final.path)
+                        summary.report.append(ReportLine(status: .skipped, asset: asset, savedAs: preferredRel, note: ""))
                         state.skipped += 1; summary.skipped += 1
                         settledBytes += asset.fileSize
                         continue
@@ -292,13 +306,21 @@ enum Exporter {
                     if let c = converted[n] { try? fm.removeItem(at: c) }
                     try? fm.removeItem(at: item.raw)
                     if let lr = item.liveRaw { try? fm.removeItem(at: lr) }
-                    if cancelledNow { summary.notAttempted += 1; continue }
+                    if cancelledNow {
+                        summary.notAttempted += 1
+                        summary.report.append(ReportLine(status: .notCopied, asset: asset, savedAs: "", note: "The copy was stopped first."))
+                        continue
+                    }
                     fail(asset, stalled ? "The device stopped responding. Unlock it and try again." : (disconnected ? "The device was disconnected." : problem))
                     continue
                 }
 
                 var saved = false
                 var reason = "The file could not be saved to the folder."
+                if options.removeLocation {
+                    LocationScrubber.scrub(converted[n] ?? item.raw)
+                    if let lr = item.liveRaw { LocationScrubber.scrub(lr) }
+                }
                 if options.convertHEIC && asset.isHEIC {
                     if let c = converted[n], AFC.fileSize(c) > 0 {
                         do { try fm.moveItem(at: c, to: item.final); saved = true } catch { reason = error.localizedDescription }
@@ -327,6 +349,7 @@ enum Exporter {
                                                     exportedPath: relativePath(of: item.final, inside: destination),
                                                     sourceRemotePath: asset.remotePath, sourceSize: asset.fileSize, exportedSize: outSize)
                 state.copied += 1; summary.copied += 1
+                summary.report.append(ReportLine(status: .copied, asset: asset, savedAs: relativePath(of: item.final, inside: destination), note: ""))
                 summary.bytesCopied += outSize
                 settledBytes += max(0, asset.fileSize)
                 transferredBytes += received
@@ -357,7 +380,36 @@ enum Exporter {
         summary.cancelled = job.isCancelled
         summary.notAttempted = max(0, summary.total - summary.copied - summary.skipped - summary.failures.count)
         summary.elapsed = Date().timeIntervalSince(started)
+        if options.saveReport, summary.copied + summary.failures.count + summary.notAttempted > 0 {
+            summary.reportURL = writeReport(summary, assets: assets, to: destination, album: options.albumName)
+        }
         return summary
+    }
+
+    /// "PortHop Reports/2026-11-23 14.05.09 Favourites.csv": a line for every item copied, failed or left out, with
+    /// counts at the top. Items already in the folder are counted, not listed, so repeat hops stay small.
+    static func writeReport(_ s: ExportSummary, assets: [PhotoAsset], to destination: URL, album: String) -> URL? {
+        let folder = destination.appendingPathComponent("PortHop Reports", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)) != nil else { return nil }
+        let stamp = DateFormatter(); stamp.locale = Locale(identifier: "en_US_POSIX"); stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let day = DateFormatter(); day.locale = Locale(identifier: "en_US_POSIX"); day.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        func q(_ v: String) -> String { v.contains(where: { ",\"\n\r".contains($0) }) ? "\"" + v.replacingOccurrences(of: "\"", with: "\"\"") + "\"" : v }
+        let seen = Set(s.report.map(\.asset.id))
+        let why = s.stalled ? "The device stopped responding." : (s.disconnected ? "The device was disconnected." : "The copy was stopped first.")
+        let lines = s.report.filter { $0.status != .skipped }
+            + assets.filter { !seen.contains($0.id) }.map { ReportLine(status: .notCopied, asset: $0, savedAs: "", note: why) }
+        func count(_ st: ReportLine.Status) -> Int { lines.filter { $0.status == st }.count }
+        var csv = "\u{FEFF}PortHop copy report," + q(album.isEmpty ? "Photos" : album) + "," + q(day.string(from: Date())) + "\n"
+        csv += "Copied,\(count(.copied))\nAlready in the folder,\(s.skipped)\nFailed,\(count(.failed))\n"
+        csv += "Only in iCloud,\(count(.cloud))\nNot copied,\(count(.notCopied))\n\n"
+        csv += "Status,Name on device,Saved as,Size (bytes),Date taken,Kind,Note\n"
+        for l in lines {
+            csv += [l.status.rawValue, l.asset.filename, l.savedAs, String(max(0, l.asset.fileSize)), l.asset.dateCreated.map { day.string(from: $0) } ?? "",
+                    l.asset.kindText, l.note].map(q).joined(separator: ",") + "\n"
+        }
+        let preferred = folder.appendingPathComponent(Pattern.safe("\(stamp.string(from: Date())) \(album.isEmpty ? "Photos" : album)") + ".csv")
+        let url = FileManager.default.fileExists(atPath: preferred.path) ? uniqueURL(for: preferred) : preferred
+        return (try? csv.write(to: url, atomically: true, encoding: .utf8)) != nil ? url : nil
     }
 
     static func decodes(_ url: URL, isVideo: Bool) -> Bool {

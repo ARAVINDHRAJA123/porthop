@@ -48,9 +48,30 @@ function statusView() {
     h('h1', {}, s.hasAdb ? 'Connect your iPhone, iPad or Android' : 'Connect your iPhone or iPad'),
     h('div', { class: 'dim' }, 'Copy photos, videos and files to this computer or an external drive over USB.'),
     h('div', { class: 'steps' }, step(1, 'Plug in', 'Use a USB cable that carries data.'), step(2, 'Unlock and allow', 'Unlock the device. Tap Trust on an iPhone, or Allow on Android.'), step(3, 'Hop it across', 'Drag a group of photos onto a folder or drive.')),
-    s.isWindows ? h('div', { class: 'dim', style: 'max-width:620px;font-size:12.5px' }, 'iPhone not showing up? Windows needs Apple’s driver: install “Apple Devices” from the Microsoft Store (or iTunes), then plug the iPhone in again.') : null,
-    !s.hasAdb ? androidSetup() : null,
+    s.appleDriverMissing ? h('div', { class: 'driver-note' }, icon('warn'),
+      h('div', {}, h('b', {}, 'Windows can’t see iPhones yet'), h('div', { class: 'dim' }, 'Apple’s iPhone driver isn’t running. Install the free Apple Devices app from the Microsoft Store, then plug the iPhone in again.')),
+      h('button', { class: 'btn', onclick: () => api.call('store') }, 'Open Microsoft Store'))
+      : s.isWindows ? h('div', { class: 'dim', style: 'max-width:620px;font-size:12.5px' }, 'iPhone not showing up? Windows needs Apple’s driver: install “Apple Devices” from the Microsoft Store (or iTunes), then plug the iPhone in again.') : null,
+    !s.hasAdb ? androidSetup() : h('button', { class: 'btn', onclick: wirelessSheet }, icon('wifi'), 'Connect an Android phone over Wi-Fi…'),
     waiting('Waiting for a device — it will appear here automatically')));
+}
+
+function wirelessSheet() {
+  const field = (placeholder, width) => h('input', { class: 'search', placeholder, style: `margin:4px 0;width:${width}` });
+  const pair = field('Pairing address, like 192.168.1.20:37001', '68%'), code = field('Code', '28%'), address = field('Address, like 192.168.1.20:41235', '100%');
+  const note = h('div', { class: 'dim', style: 'min-height:18px;margin-top:6px' });
+  const go = h('button', { class: 'btn primary', onclick: async () => {
+    go.disabled = true; note.textContent = code.value.trim() ? 'Pairing…' : 'Connecting…';
+    const problem = await api.call('adb:wireless', { pair: pair.value, code: code.value, address: address.value });
+    go.disabled = false;
+    if (problem) note.textContent = problem; else closeModal();
+  } }, 'Connect');
+  openModal(h('div', { class: 'sheet' }, h('h2', {}, 'Android over Wi-Fi'),
+    h('div', { class: 'dim' }, 'On the phone: Settings › Developer options › Wireless debugging (Android 11 or later).'),
+    h('div', { class: 'stepno' }, h('div', { class: 'num' }, 1), 'First time only: tap “Pair device with pairing code” and type what it shows'), h('div', { style: 'display:flex;gap:4%' }, pair, code),
+    h('div', { class: 'stepno' }, h('div', { class: 'num' }, 2), 'The “IP address & Port” on the Wireless debugging screen'), address, note,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), go)));
+  pair.focus();
 }
 
 function androidSetup() {

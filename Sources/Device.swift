@@ -84,6 +84,12 @@ let uiTestBuild: Bool = {
     #endif
 }()
 
+/// A test switch from the environment: PORTHOP_<name>, or IPHONE_<name> as versions before 2.1 called it.
+func testEnv(_ name: String) -> String? {
+    let e = ProcessInfo.processInfo.environment
+    return e["PORTHOP_" + name] ?? e["IPHONE_" + name]
+}
+
 struct Tools {
     let ideviceId: String
     let ideviceInfo: String
@@ -93,10 +99,10 @@ struct Tools {
     var diagnostics: String? = nil
     var adb: String? = nil
 
-    static func locate() -> Tools? {
-        var dirs = [Bundle.main.bundlePath + "/Contents/Helpers", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin",
+    static func locate(extraDirs: [String] = []) -> Tools? {
+        var dirs = extraDirs + [Bundle.main.bundlePath + "/Contents/Helpers", "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin",
                     NSHomeDirectory() + "/.local/bin"] + Android.toolsDirs
-        if uiTestBuild, let override = ProcessInfo.processInfo.environment["IPHONE_TOOLS_DIR"], !override.isEmpty {
+        if uiTestBuild, let override = testEnv("TOOLS_DIR"), !override.isEmpty {
             dirs.insert(override, at: 0)
         }
         if let path = ProcessInfo.processInfo.environment["PATH"] {

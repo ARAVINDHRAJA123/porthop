@@ -7,6 +7,12 @@ if a[:1] == ["devices"]:
     print("List of devices attached")
     if root: print("FAKEANDROID01\t" + ("unauthorized" if os.environ.get("FAKE_ANDROID_LOCKED") else "device"))
     print(); sys.exit(0)
+if a[:1] == ["pair"]:   # wireless debugging: the fake phone's pairing code is 123456
+    if len(a) == 3 and a[2] == "123456": print("Successfully paired to %s [guid=adb-FAKE-01]" % a[1]); sys.exit(0)
+    print("Failed: Wrong password or connection was dropped."); sys.exit(1)
+if a[:1] == ["connect"]:
+    if len(a) == 2 and a[1].endswith(":41235"): print("connected to " + a[1]); sys.exit(0)
+    print("failed to connect to '%s': Connection refused" % (a[1] if len(a) > 1 else "")); sys.exit(1)
 if a[:1] == ["-s"]: a = a[2:]
 if not root: sys.exit("adb: no devices/emulators found")
 def real(p):

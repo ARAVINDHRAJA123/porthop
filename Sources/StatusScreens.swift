@@ -68,7 +68,7 @@ struct StatusView: View {
             }
             .frame(maxWidth: 720)
             .onAppear { stepsShown = true }
-            if m.tools?.adb == nil { AndroidSetupRow(m: m) }
+            if m.tools?.adb == nil { AndroidSetupRow(m: m) } else { AndroidWirelessButton(m: m) }
             waiting("Waiting for a device — it will appear here automatically")
         case .needsTrust(let msg):
             hero("lock.iphone", rings: true)

@@ -35,6 +35,26 @@ enum Android {
             return "The download did not finish (\(error.localizedDescription)). Check the internet connection and try again."
         }
     }
+    /// Wireless debugging (Android 11 and later). Pairing, needed once per computer, uses the address and six-digit code from
+    /// "Pair device with pairing code"; connecting uses the address on the Wireless debugging screen. Returns nil or a reason.
+    static func wireless(pair pairAddress: String, code: String, connect address: String, tools: Tools) -> String? {
+        guard let adb = tools.adb else { return "Set up Android support first." }
+        func valid(_ a: String) -> Bool { a.range(of: #"^[A-Za-z0-9.\-\[\]:%]+:\d{2,5}$"#, options: .regularExpression) != nil }
+        let p = pairAddress.trimmingCharacters(in: .whitespaces), c = code.filter(\.isNumber), a = address.trimmingCharacters(in: .whitespaces)
+        if !p.isEmpty || !code.trimmingCharacters(in: .whitespaces).isEmpty {
+            guard valid(p), c.count == 6 else { return "Enter the pairing address (like 192.168.1.20:37001) and the six-digit code the phone shows." }
+            guard Shell.run(adb, ["pair", p, c], timeout: 30)?.output.contains("Successfully paired") == true else {
+                return "Pairing didn't work. Check the code: it changes every time the phone shows it."
+            }
+        }
+        guard valid(a) else { return "Enter the address shown on the phone's Wireless debugging screen (like 192.168.1.20:41235)." }
+        let out = (Shell.run(adb, ["connect", a], timeout: 30)?.output ?? "").lowercased()
+        guard out.contains("connected to"), !out.contains("failed"), !out.contains("unable") else {
+            return "The phone didn't answer at \(a). Keep Wireless debugging on, with the phone and this Mac on the same Wi-Fi."
+        }
+        return nil
+    }
+
     static let storageRoot = "/sdcard"
 
     static func args(_ device: Device) -> [String] { ["-s", device.udid] }

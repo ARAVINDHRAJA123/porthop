@@ -23,7 +23,7 @@ actor Limiter {
 
 final class ThumbnailLoader {
     static let shared = ThumbnailLoader()
-    static let cacheRoot = FileManager.default.temporaryDirectory.appendingPathComponent("iPhoneAlbumExtractor2-cache", isDirectory: true)
+    static let cacheRoot = FileManager.default.temporaryDirectory.appendingPathComponent("PortHop-cache", isDirectory: true)
 
     private let cache = NSCache<NSNumber, NSImage>()
     private let limiter = Limiter(3)
@@ -33,7 +33,10 @@ final class ThumbnailLoader {
 
     init() { cache.countLimit = 4000 }
 
-    static func purgeDiskCache() { try? FileManager.default.removeItem(at: cacheRoot) }
+    static func purgeDiskCache() {
+        try? FileManager.default.removeItem(at: cacheRoot)
+        try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("iPhoneAlbumExtractor2-cache"))
+    }
 
     func cached(_ id: Int64) -> NSImage? { cache.object(forKey: NSNumber(value: id)) }
 
