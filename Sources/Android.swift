@@ -214,6 +214,79 @@ enum Android {
         shell("mkdir \(sh(path)) && echo made", device: device, tools: tools)?.contains("made") == true
     }
 
+    /// Creates a folder and any missing parents.
+    static func mkdirs(_ path: String, device: Device, tools: Tools) -> Bool {
+        shell("mkdir -p \(sh(path)) && echo made", device: device, tools: tools)?.contains("made") == true
+    }
+
+    /// Asks the phone's media index to pick up new or removed files, so the Gallery and music apps show the change.
+    /// Android 11 and later notice files themselves; older versions need this.
+    static func scan(_ paths: [String], device: Device, tools: Tools) {
+        for chunk in stride(from: 0, to: paths.count, by: 40).map({ Array(paths[$0..<min($0 + 40, paths.count)]) }) {
+            let cmd = chunk.map { "am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d \(sh("file://" + $0)) >/dev/null" }.joined(separator: "; ")
+            _ = shell(cmd, device: device, tools: tools, timeout: 60)
+        }
+    }
+
+    /// Deletes files from the phone. Returns the paths that are gone afterwards.
+    static func delete(_ paths: [String], device: Device, tools: Tools) -> [String] {
+        var gone: [String] = []
+        for chunk in stride(from: 0, to: paths.count, by: 40).map({ Array(paths[$0..<min($0 + 40, paths.count)]) }) {
+            let cmd = chunk.map { "rm -f -- \(sh($0)) && [ ! -e \(sh($0)) ] && echo \(sh("GONE " + $0))" }.joined(separator: "; ")
+            let out = shell(cmd, device: device, tools: tools, timeout: 120) ?? ""
+            for line in out.split(whereSeparator: \.isNewline) where line.hasPrefix("GONE ") { gone.append(String(line.dropFirst(5))) }
+        }
+        scan(gone, device: device, tools: tools)
+        return gone
+    }
+
+    /// Every file in a phone folder and the folders inside it, with sizes (for checking copies before deleting).
+    static func filesBelow(_ dir: String, device: Device, tools: Tools) -> [AFCFileEntry] {
+        var out: [AFCFileEntry] = []
+        var todo = [dir]
+        while let d = todo.popLast(), out.count < 200_000 {
+            for e in list(d, device: device, tools: tools) { if e.isDirectory { todo.append(e.path) } else { out.append(e) } }
+        }
+        return out
+    }
+
+    /// Sends every file in a Mac folder to a phone folder, keeping the layout inside it. A file already there with the same
+    /// name and size is left alone; a different file with the same name gets " (2)". The Gallery is told about new files.
+    static func sendFolder(_ local: URL, to remoteRoot: String, phone: Device, tools: Tools, job: ExportJob,
+                           progress: (Int, Int) -> Void) -> (sent: Int, already: Int, failed: [String]) {
+        let files = (FileManager.default.enumerator(at: local, includingPropertiesForKeys: [.isRegularFileKey])?.allObjects as? [URL] ?? [])
+            .filter { (try? $0.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true && !$0.lastPathComponent.hasPrefix(".") }
+            .sorted { $0.path < $1.path }
+        var sent = 0, already = 0, failed: [String] = [], scanned: [String] = []
+        var listed: [String: [String: Int64]] = [:]
+        let base = local.resolvingSymlinksInPath().path
+        for (i, file) in files.enumerated() {
+            if job.isCancelled { break }
+            progress(i, files.count)
+            let parent = file.deletingLastPathComponent().resolvingSymlinksInPath().path
+            let rel = parent.hasPrefix(base + "/") ? String(parent.dropFirst(base.count + 1)) : ""
+            let dir = rel.isEmpty ? remoteRoot : remoteRoot + "/" + rel
+            if listed[dir] == nil {
+                _ = mkdirs(dir, device: phone, tools: tools)
+                listed[dir] = Dictionary(list(dir, device: phone, tools: tools).map { ($0.name, $0.size) }, uniquingKeysWith: { a, _ in a })
+            }
+            let size = AFC.fileSize(file)
+            if listed[dir]?[file.lastPathComponent] == size { already += 1; continue }
+            let before = Set(listed[dir]?.keys.map { $0 } ?? [])
+            var existing = before
+            if push(file, intoDir: dir, existing: &existing, device: phone, tools: tools, onStart: { job.track($0) }) {
+                let used = existing.subtracting(before).first ?? file.lastPathComponent
+                sent += 1
+                scanned.append(dir + "/" + used)
+                listed[dir]?[used] = size
+            } else { failed.append(file.lastPathComponent) }
+            job.clear()
+        }
+        progress(files.count, files.count)
+        scan(scanned, device: phone, tools: tools)
+        return (sent, already, failed)
+    }
+
     static func power(_ action: String, device: Device, tools: Tools) -> Bool {
         guard let adb = tools.adb else { return false }
         if action == "restart" { return Shell.run(adb, args(device) + ["reboot"], timeout: 20)?.ok == true }

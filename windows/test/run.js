@@ -112,6 +112,7 @@ const s = (x) => JSON.stringify({ copied: x.copied, skipped: x.skipped, failed: 
   const dl = (await android.list('/sdcard/Download', ad, tools)).map((e) => e.name);
   check('android copy both ways (no overwrite)', a1 && !a2 && s1 && s2 && m1 && !m2 && dl.length === 3 && dl.includes('IMG_0001 (2).JPG'), JSON.stringify(dl));
   if (fs.existsSync(path.join(__dirname, 'backup.js'))) failures += await require('./backup')(T, check, macTests);
+  failures += await require('./phase7')({ T, check, macTests, tools, dev, hidden, ad, droid });
   fs.rmSync(T, { recursive: true, force: true });
   console.log(failures === 0 ? 'ALL PASSED' : `${failures} FAILED`);
   process.exit(failures === 0 ? 0 : 1);

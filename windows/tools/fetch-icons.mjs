@@ -17,6 +17,8 @@ const ICONS = {
   restart: 'restart_alt', moon: 'bedtime', sun: 'light_mode', contrast: 'contrast', plus: 'add', warn: 'warning', check: 'check', camera: 'photo_camera',
   bolt: 'bolt', locoff: 'location_off', report: 'summarize', update: 'system_update_alt', wifi: 'wifi', pdf: 'picture_as_pdf', mic: 'mic',
   contact: 'contacts', event: 'event', terminal: 'terminal', backup: 'backup',
+  shield: 'shield', screen: 'mobile_screen_share', record: 'radio_button_checked', stop: 'stop_circle', square: 'crop_square', circle: 'circle',
+  bell: 'notifications', install: 'install_mobile', send: 'send_to_mobile',
 };
 
 async function get(path) {

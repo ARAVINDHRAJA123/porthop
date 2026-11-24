@@ -20,7 +20,10 @@ function parseAsk(raw) {
     if (hit) { i.dest = hit; body = m[1] + ' '; }
   }
   const says = (...w) => w.some((x) => body.includes(x));
-  const routes = [['bk:whatsapp', ['whatsapp']], ['bk:messages', ['message', 'imessage', ' sms', 'texts']], ['bk:contacts', ['contact']], ['bk:notes', [' note']],
+  const routes = [['nav_check', ['spyware', 'pegasus', 'stalkerware', 'malware', 'hacked', 'being tracked']],
+    ['nav_screen', ['mirror', 'screen recording', 'record the screen', 'record my screen', 'phone screen', 'iphone screen', 'see the screen', 'show the screen']],
+    ['nav_music', ['music', 'song', 'ringtone']], ['nav_apps', ['install', 'remove app', 'delete app', 'installed apps', 'my apps']],
+    ['bk:whatsapp', ['whatsapp']], ['bk:messages', ['message', 'imessage', ' sms', 'texts']], ['bk:contacts', ['contact']], ['bk:notes', [' note']],
     ['bk:calendar', ['calendar', 'event']], ['bk:calls', ['call log', 'calls', 'call history']], ['bk:safari', ['safari', 'bookmark', 'browsing']], ['bk:voiceMemos', ['voice memo', 'recording']],
     ['nav_backup', ['back up', 'backup', 'restore']], ['nav_device', ['battery', 'health', 'storage', 'serial', 'imei', 'details']], ['nav_files', ['files', 'apps', 'documents']]];
   const albums = [['smart_hidden', ['hidden']], ['smart_screenshots', ['screenshot']], ['smart_favorites', ['favorite', 'favourite']], ['smart_selfies', ['selfie']],
@@ -58,10 +61,11 @@ function parseAsk(raw) {
   const photoRequest = i.album || i.filter || i.from != null || i.minBytes;
   if (!photoRequest) {
     const hit = routes.find(([, w]) => says(...w));
-    if (hit && !(isAndroid() && (hit[0].startsWith('bk:') || hit[0] === 'nav_backup'))) i.route = hit[0];
+    if (hit && !(isAndroid() && (hit[0].startsWith('bk:') || hit[0] === 'nav_backup' || hit[0] === 'nav_music'))) i.route = hit[0];
   }
   if (photoRequest && !i.album && !isAndroid()) i.album = 'smart_all';
-  if (i.route) i.parts.push(i.route.startsWith('bk:') ? DATA_KINDS.find((k) => 'bk:' + k[0] === i.route)[1] : { nav_backup: 'Backups', nav_device: 'Device details', nav_files: isAndroid() ? 'Phone storage' : 'Media files' }[i.route]);
+  if (i.route) i.parts.push(i.route.startsWith('bk:') ? DATA_KINDS.find((k) => 'bk:' + k[0] === i.route)[1] : { nav_backup: 'Backups', nav_device: 'Device details', nav_files: isAndroid() ? 'Phone storage' : 'Media files',
+    nav_check: 'Spyware check', nav_screen: 'Screen', nav_music: 'Music & ringtones', nav_apps: 'Apps' }[i.route]);
   if (i.album) i.parts.push([...state.smart, ...state.user, ...(state.people || [])].find((a) => a.id === i.album)?.title || 'Library');
   if (i.filter) i.parts.push(FILTERS.find((f) => f[0] === i.filter)[1]);
   if (i.from != null) i.parts.push(rangeText(i.from, i.to));

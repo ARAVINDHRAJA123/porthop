@@ -245,6 +245,18 @@ struct ShoresView: View {
                         return true
                     }
                 }
+                if let peer = m.androidPeer, !m.isAndroid {
+                    AndroidTargetCard(m: m, phone: peer, targeted: targeted == "android")
+                        .shoreFrame("dest:android")
+                        .onDrop(of: [UTType.plainText], isTargeted: Binding(get: { targeted == "android" }, set: { targeted = $0 ? "android" : (targeted == "android" ? nil : targeted) })) { providers in
+                            pileID(providers) { id in
+                                guard !m.isExporting, let p = piles.first(where: { $0.id == id }), let album = p.album else { return }
+                                pendingFlight = (p.id, "dest:android")
+                                m.requestAndroidHop(album, to: peer)
+                            }
+                            return true
+                        }
+                }
                 Button {
                     if let url = Destinations.choose(m) { m.rememberDestination(url) }
                 } label: {

@@ -207,6 +207,17 @@ final class BackupReader {
         return id
     }
 
+    /// Every file in the backup, as its domain and path (folders are left out).
+    func eachFile(_ body: (_ domain: String, _ path: String) -> Void) {
+        manifest.each("SELECT domain, relativePath FROM Files WHERE flags = 1") { s in body(SQLiteFile.text(s, 0), SQLiteFile.text(s, 1)) }
+    }
+
+    /// The contents of one small file in the backup (a settings file, say), decrypted when needed.
+    func contents(domain: String, path: String) -> Data? {
+        guard let id = fileID(domain: domain, path: path), let url = plain(id) else { return nil }
+        return try? Data(contentsOf: url)
+    }
+
     /// Opens a database held in the backup. Unsaved changes kept beside it (a "-wal" file) are included by working on a copy.
     func database(domain: String, path: String) -> SQLiteFile? {
         guard let id = fileID(domain: domain, path: path) else { return nil }
@@ -672,7 +683,9 @@ final class BackupReader {
         var written: [URL] = []
         var reserved = Set<String>()
         for r in rows where r < group.fileIDs.count {
-            var dest = folder.appendingPathComponent(group.rows[r][0])
+            var name = group.rows[r][0].replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-")
+            if name.isEmpty || name == "." || name == ".." { name = group.fileIDs[r] }
+            var dest = folder.appendingPathComponent(name)
             if FileManager.default.fileExists(atPath: dest.path) || reserved.contains(dest.path) { dest = Exporter.uniqueURL(for: dest, avoiding: reserved) }
             reserved.insert(dest.path)
             if let source = plain(group.fileIDs[r]), (try? FileManager.default.copyItem(at: source, to: dest)) != nil { written.append(dest) }

@@ -416,6 +416,7 @@ struct FilesView: View {
                                       : m.afcMessage)
                 .font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
             Spacer()
+            RemoveCopiedButton(m: m)
             if m.afcBusy {
                 Button("Stop") { m.stopTransfer() }.buttonStyle(SoftButtonStyle())
             } else {

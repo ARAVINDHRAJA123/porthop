@@ -39,10 +39,40 @@ if cmd == "shell":
             p = os.path.join(d, n); st = os.stat(p)
             print("%s 1 u0_a1 media_rw %d %s %s" % ("drwxrwx---" if os.path.isdir(p) else "-rw-rw----", st.st_size,
                                                    time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)), n), end="\r\n")
+    elif line.startswith("mkdir -p "):
+        os.makedirs(real(shlex.split(line)[2]), exist_ok=True); print("made")
     elif line.startswith("mkdir "):
         d = real(shlex.split(line)[1])
         if os.path.exists(d): sys.exit(1)
         os.mkdir(d); print("made")
+    elif line.startswith("am broadcast "):   # media scans, recorded so tests can see which files were announced
+        log = os.environ.get("FAKE_ANDROID_LOG")
+        for seg in line.split("; "):
+            path = shlex.split(seg)[-2][len("file://"):] if ">/dev/null" in seg else shlex.split(seg)[-1][len("file://"):]
+            if log: open(log, "a").write("scan " + path + "\n")
+        print("Broadcast completed: result=0")
+    elif line.startswith("rm -f -- "):
+        for seg in line.split("; "):
+            path = shlex.split(seg)[3]
+            f = real(path)
+            if os.path.isfile(f): os.remove(f)
+            if not os.path.exists(f): print("GONE " + path)
+    elif line == "pm list packages":
+        print("package:com.android.chrome\npackage:com.google.android.gms\npackage:com.fake.stalker2\npackage:com.example.app")
+    elif line == "pm list packages -3":
+        print("package:com.fake.stalker2\npackage:com.example.app")
+    elif line in ("ps -A -o NAME", "ps -A"):
+        print("NAME\ninit\nsurfaceflinger\ncom.fake.stalker2:svc\ndroidspyd\ncom.android.chrome")
+    elif line == "settings get secure enabled_accessibility_services": print("com.fake.stalker2/com.fake.stalker2.Svc")
+    elif line == "settings get secure enabled_notification_listeners": print("com.google.android.gms/.Listener:com.fake.stalker2/com.fake.N")
+    elif line == "settings get global package_verifier_enable": print("0")
+    elif line == "dumpsys device_policy": print("Current Device Policy Manager state:\n  Enabled Device Admins (User 0, provisioningState: 0):\n    Admin: ComponentInfo{com.fake.stalker2/com.fake.Admin}:")
+    elif line == "appops query-op REQUEST_INSTALL_PACKAGES allow": print("com.fake.stalker2\ncom.android.chrome")
+    elif line == "wm size": print("Physical size: 1080x2400")
+    elif line == "dumpsys package packages":
+        print("Packages:\n  Package [com.fake.stalker2] (a1b2):\n    userId=10200\n    versionName=6.6.6\n  Package [com.example.app] (c3d4):\n    versionName=1.2\n    versionName=9.9")
+    elif line == "dumpsys diskstats":
+        print('Latency: 1ms\nPackage Names: ["com.fake.stalker2","com.example.app"]\nApp Sizes: [1000,2000]\nApp Data Sizes: [10,20]')
     elif line.startswith("content query --uri content://media/external/file"):
         # MediaStore: one row per photo or video, with its path as the phone sees it and its size.
         n = 0
@@ -64,4 +94,20 @@ elif cmd == "push":
     if os.path.isdir(src): shutil.copytree(src, dst)
     else: shutil.copy2(src, dst)
 elif cmd == "reboot": pass
+elif cmd == "exec-out" and a[1] == "screencap":
+    # A 1x1 PNG, the way the phone sends a screenshot.
+    sys.stdout.buffer.write(bytes.fromhex("89504e470d0a1a0a0000000d4948445200000001000000010806000000"
+                                          "1f15c4890000000d49444154789c6360f8cfc0f01f0005000201e5d5b0a20000000049454e44ae426082"))
+elif cmd == "exec-out" and a[1] == "screenrecord":
+    # The phone's own encoder output: an H.264 stream (the same test stream both apps' tests decode).
+    sys.stdout.buffer.write(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "golden", "screen", "stream.h264"), "rb").read())
+elif cmd == "install":
+    apk = a[-1]
+    if not apk.endswith(".apk") or not os.path.isfile(apk): print("adb: failed to stat " + apk); sys.exit(1)
+    print("Performing Streamed Install")
+    if "old" in os.path.basename(apk): print("adb: failed to install " + apk + ": Failure [INSTALL_FAILED_VERSION_DOWNGRADE]"); sys.exit(1)
+    print("Success")
+elif cmd == "uninstall":
+    if a[-1] in ("com.fake.stalker2", "com.example.app"): print("Success")
+    else: print("Failure [DELETE_FAILED_INTERNAL_ERROR]"); sys.exit(1)
 else: sys.exit(1)

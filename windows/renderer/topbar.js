@@ -50,10 +50,19 @@ async function checkUpdates() {
     h('p', { class: 'dim' }, r.error ? r.error : 'There is nothing to update.'), h('div', { class: 'foot' }, h('button', { class: 'btn primary', onclick: closeModal }, 'OK'))));
 }
 function updateSheet(u) {
+  const note = h('div', { class: 'dim', style: 'min-height:20px' });
+  const off = api.on('update:status', (t) => { note.textContent = t; });
+  const install = h('button', { class: 'btn primary', onclick: async () => {
+    install.disabled = true;
+    const r = await api.call('update:install');
+    if (r && r.error) { note.textContent = r.error + ' Nothing was changed.'; install.disabled = false; }
+    else if (r && r.restart) note.textContent = 'PortHop is closing to finish the update…';
+  } }, icon('update'), 'Install and Restart');
   openModal(h('div', { class: 'sheet' }, h('h2', {}, `PortHop ${u.version} is available`),
-    h('p', { class: 'dim', style: 'white-space:pre-wrap;max-height:240px;overflow:auto' }, (u.notes || '').slice(0, 900) || 'A newer version is on GitHub.'),
-    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: closeModal }, 'Later'),
-      h('button', { class: 'btn primary', onclick: () => { closeModal(); api.call('update:open'); } }, icon('down'), 'Download'))));
+    h('p', { class: 'dim', style: 'white-space:pre-wrap;max-height:240px;overflow:auto' }, (u.notes || '').slice(0, 900) || 'A newer version is on GitHub.'), note,
+    h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: () => { off(); closeModal(); } }, 'Later'),
+      state.canInstallUpdate ? [h('button', { class: 'btn', onclick: () => { off(); closeModal(); api.call('update:open'); } }, 'Release Page'), install]
+        : h('button', { class: 'btn primary', onclick: () => { off(); closeModal(); api.call('update:open'); } }, icon('down'), 'Download'))));
 }
 
 function drawTopBar() {
@@ -100,7 +109,11 @@ function devicePopover(anchor) {
   }
   items.push(['Battery and device details', 'info', () => go('nav_device')]);
   if (!isAndroid()) items.push(['Backups', 'clock', () => go('nav_backup')]);
-  items.push([isAndroid() ? 'Phone storage' : 'Media files', 'folder', () => go('nav_files')], '-', ['Refresh', 'refresh', () => api.call('refresh')]);
+  items.push([isAndroid() ? 'Phone storage' : 'Media files', 'folder', () => go('nav_files')]);
+  if (isAndroid()) items.push(['Screen', 'screen', () => go('nav_screen')]);   // an iPhone's screen needs a Mac
+  items.push(['Apps', 'app', () => go('nav_apps')]);
+  if (!isAndroid()) items.push(['Music & ringtones', 'music', () => go('nav_music')]);
+  items.push(['Spyware check', 'shield', () => go('nav_check')], '-', ['Refresh', 'refresh', () => api.call('refresh')]);
   popover(anchor, items);
 }
 

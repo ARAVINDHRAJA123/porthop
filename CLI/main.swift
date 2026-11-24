@@ -7,7 +7,7 @@ import Foundation
 let exe = Bundle.main.executableURL?.resolvingSymlinksInPath() ?? URL(fileURLWithPath: CommandLine.arguments[0])
 let appInfo = (try? Data(contentsOf: exe.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("Info.plist")))
     .flatMap { try? PropertyListSerialization.propertyList(from: $0, format: nil) } as? [String: Any]
-let version = appInfo?["CFBundleShortVersionString"] as? String ?? "2.1"
+let version = appInfo?["CFBundleShortVersionString"] as? String ?? "2.2"
 var args = Array(CommandLine.arguments.dropFirst())
 func flag(_ name: String) -> Bool { if let i = args.firstIndex(of: name) { args.remove(at: i); return true }; return false }
 func option(_ name: String) -> String? {
@@ -29,6 +29,12 @@ porthop \(version): copy photos and videos off an iPhone or iPad, from Terminal.
       --names "{year}-{month}-{day} {hour}.{minute}.{second}"   rename the copies
       --heic-to-jpeg  --edited  --live  --original-names  --no-location  --no-report  --no-dates
   porthop backup <folder> [--keep-versions]   a full backup in the same format as Finder's
+  porthop music <folder>             copy the iPhone's songs and ringtones (Artist/Album/01 Title)
+  porthop apps                       the apps installed on the iPhone, iPad or Android phone
+  porthop indicators [file.stix2]    download the public spyware indicators (or add a file someone sent you)
+  porthop check <backup folder>      check an iPhone backup for known spyware (exit code 1 when something matches)
+  porthop check                      check a connected Android phone for known spyware and stalkerware
+      --password <password>          for an encrypted backup
 
   Pattern tokens: \(Pattern.tokens)
   Options: --device <id> picks a device when several are connected; --json prints machine-readable results.
@@ -45,6 +51,57 @@ if let env = ProcessInfo.processInfo.environment["PORTHOP_TOOLS_DIR"], !env.isEm
 helperDirs.append(exe.deletingLastPathComponent().path)
 guard let tools = Tools.locate(extraDirs: helperDirs) else { fail("The device tools were not found. Run porthop from inside PortHop.app (Contents/MacOS).") }
 
+func expand(_ p: String) -> String { (p as NSString).expandingTildeInPath }
+
+/// Prints a spyware check and exits: 0 when nothing matched, 1 when something did.
+func report(_ r: Spyware.Report) -> Never {
+    if json {
+        emit(["matches": r.findings.map { ["area": $0.area, "found": $0.found, "spyware": $0.indicator.malware, "source": $0.indicator.source, "when": $0.when] },
+              "checked": r.checked, "notAvailable": r.missing, "indicators": r.indicatorCount, "warnings": r.warnings,
+              "review": r.review.map { ["title": $0.title, "apps": $0.apps] as [String: Any] }])
+    } else {
+        print(r.findings.isEmpty ? "No known spyware found (checked against \(r.indicatorCount) indicators)." : "\(r.findings.count) match(es) with known spyware:")
+        for f in r.findings { print("  \(f.area): \(f.found)  [\(f.indicator.malware), \(f.indicator.source)]\(f.when.isEmpty ? "" : "  " + f.when)") }
+        for w in r.warnings { print("Warning: \(w)") }
+        for g in r.review { print("\(g.title): \(g.apps.joined(separator: ", "))") }
+        if !r.findings.isEmpty { print("A match can be a false alarm, but get expert help: securitylab.amnesty.org, accessnow.org/help") }
+    }
+    exit(r.findings.isEmpty ? 0 : 1)
+}
+
+func indicators() -> Spyware.Indicators {
+    let set = Spyware.load(from: Spyware.folder)
+    if set.isEmpty { fail("No spyware indicators yet. Run: porthop indicators", 3) }
+    return set
+}
+
+if command == "indicators" {
+    if let file = args.first {
+        let problem = Spyware.add(file: URL(fileURLWithPath: expand(file)), to: Spyware.folder)
+        if let problem { fail(problem, 2) }
+    } else {
+        let done = DispatchSemaphore(value: 0)
+        var problem: String?
+        Task.detached { problem = await Spyware.download(to: Spyware.folder); done.signal() }
+        done.wait()
+        if let problem, Spyware.load(from: Spyware.folder).isEmpty { fail(problem, 1) }
+        if let problem { FileHandle.standardError.write(Data((problem + "\n").utf8)) }
+    }
+    let n = Spyware.load(from: Spyware.folder).count, sources = Spyware.sources(in: Spyware.folder).count
+    if json { emit(["indicators": n, "sources": sources]) } else { print("\(n) indicators from \(sources) source\(sources == 1 ? "" : "s").") }
+    exit(0)
+}
+let password = option("--password")
+if command == "check", let path = args.first {
+    let set = indicators()
+    switch BackupReader.open(folder: URL(fileURLWithPath: expand(path)), password: password) {
+    case .ready(let r): report(Spyware.scan(backup: r, with: set))
+    case .needsPassword: fail("This backup is encrypted: add --password <its password>.")
+    case .wrongPassword: fail("That password didn't open the backup.")
+    case .unreadable: fail("That folder isn't a readable backup (it should hold Manifest.db).", 3)
+    }
+}
+
 let found = AFC.findDevices(tools) + Android.findDevices(tools)
 if command == "devices" {
     let list: [[String: Any]] = found.map { d in
@@ -56,10 +113,11 @@ if command == "devices" {
     exit(0)
 }
 
-guard let device = (wantedDevice.map { id in found.first { $0.udid == id } } ?? found.first(where: { !$0.isAndroid })) else {
+let androidToo = ["apps", "check"].contains(command)
+guard let device = (wantedDevice.map { id in found.first { $0.udid == id } } ?? found.first(where: { !$0.isAndroid }) ?? (androidToo ? found.first : nil)) else {
     fail(wantedDevice != nil ? "No connected device has the id \(wantedDevice!)." : "No iPhone or iPad. Plug it in, unlock it and tap Trust.", 3)
 }
-guard !device.isAndroid else { fail("Android phones are copied from the app for now; the command line copies from iPhones and iPads.") }
+guard !device.isAndroid || androidToo else { fail("Android phones are copied from the app for now; the command line copies from iPhones and iPads.") }
 
 func catalog() -> Catalog {
     let fm = FileManager.default
@@ -140,6 +198,27 @@ case "backup":
     }
     if json { emit(["ok": problem == nil, "error": (problem as Any?) ?? NSNull()]) } else { print(problem.map { "\n" + $0 } ?? "\nBackup complete.") }
     exit(problem == nil ? 0 : 1)
+
+case "check":
+    guard device.isAndroid else { fail("Give the backup folder to check: porthop check <backup folder>. Make one with: porthop backup <folder>") }
+    report(Spyware.scan(android: device, tools: tools, with: indicators()))
+
+case "apps":
+    guard let list = AppManager.list(device: device, tools: tools) else { fail("The app list could not be read. Unlock the device.", 3) }
+    if json { emit(list.map { ["id": $0.id, "name": $0.name, "version": $0.version, "bytes": $0.bytes] as [String: Any] }) }
+    else { for a in list { print("\(a.id)\t\(a.name)\t\(a.version)") } }
+
+case "music":
+    guard let path = args.first else { fail("Usage: porthop music <folder>") }
+    let (songs, problem) = MusicLibrary.load(device: device, tools: tools)
+    if let problem { fail(problem, 3) }
+    let o = MusicLibrary.copy(songs, to: URL(fileURLWithPath: expand(path)), device: device, tools: tools, job: ExportJob()) { n, total, title in
+        if !json { FileHandle.standardError.write(Data("\r\(n + 1)/\(total) \(title)                    ".utf8)) }
+    }
+    let locked = songs.filter { !$0.canCopy }.count
+    if json { emit(["copied": o.copied, "skipped": o.skipped, "failed": o.failed.count - locked, "notCopyable": locked]) }
+    else { print("\nCopied \(o.copied), already there \(o.skipped)" + (locked > 0 ? ", \(locked) not copyable (Apple Music or only in the cloud)" : "") + (o.failed.count > locked ? ", \(o.failed.count - locked) failed." : ".")) }
+    exit(o.failed.count > locked ? 1 : 0)
 
 default:
     fail("Unknown command “\(command)”.\n\n" + usage)

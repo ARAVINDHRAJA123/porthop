@@ -1,7 +1,7 @@
 {
   "name": "porthop",
   "productName": "PortHop",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Copy photos, files and backups between an iPhone, iPad or Android device and a Windows PC over USB.",
   "main": "main.js",
   "license": "MIT",

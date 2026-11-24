@@ -306,3 +306,30 @@ progress::-webkit-progress-bar { background: transparent; } progress::-webkit-pr
 .name-row { display: flex; align-items: center; gap: 8px; }
 .update-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--md-primary-container); color: var(--md-on-primary-container); }
 .name-row input { background: var(--md-surface-container-high); border-radius: 12px; padding: 8px 12px; }
+
+/* Phone tools: screen, apps, music, spyware check */
+.tool-page { display: flex; flex-direction: column; gap: 12px; height: 100%; box-sizing: border-box; }
+.tool-head { display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap; }
+.tool-head h1 { margin: 0; }
+.tool-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.tool-actions .search { margin: 0; width: 200px; }
+.tool-list { flex: 1; overflow: auto; border-radius: 16px; background: var(--surface, rgba(127,127,127,.06)); min-height: 120px; }
+.tool-row { display: flex; align-items: center; gap: 12px; padding: 9px 14px; border-bottom: 1px solid var(--line, rgba(127,127,127,.15)); cursor: default; }
+.tool-row:last-child { border-bottom: 0; }
+.tool-row .tile { width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; flex: none; }
+.tool-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.tool-main b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tool-main small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.screen-page { display: flex; flex-direction: column; gap: 12px; height: 100%; box-sizing: border-box; }
+.screen-wrap { flex: 1; min-height: 0; position: relative; display: grid; place-items: center; background: #000; border-radius: 20px; overflow: hidden; }
+.screen-canvas { display: block; cursor: pointer; touch-action: none; }
+.screen-status { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; color: #fff; text-align: center; padding: 24px; }
+.screen-status.hidden { display: none; }
+.spy-result { margin-top: 16px; }
+.spy-ic { width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; color: #fff; }
+.spy-ic.ok { background: var(--green, #2bb673); }
+.spy-ic.bad { background: var(--red, #e5484d); }
+.spy-row { display: flex; gap: 10px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line, rgba(127,127,127,.15)); }
+.spy-row > span:first-child { color: var(--red, #e5484d); }
+.spy-row div { display: flex; flex-direction: column; }
+.android-dest .dest-ic { background: #2fb36b; }

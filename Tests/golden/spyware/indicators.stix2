@@ -1,0 +1,344 @@
+{
+ "type": "bundle",
+ "id": "bundle--test",
+ "objects": [
+  {
+   "type": "malware",
+   "spec_version": "2.1",
+   "id": "malware--a",
+   "name": "TestSpy",
+   "is_family": false
+  },
+  {
+   "type": "malware",
+   "spec_version": "2.1",
+   "id": "malware--b",
+   "name": "StalkTest",
+   "is_family": false
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--0",
+   "pattern": "[domain-name:value='bad-spy-domain.test']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--0",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--0",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--1",
+   "pattern": "[domain-name:value='evil-sms.example.org']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--1",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--1",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--2",
+   "pattern": "[domain-name:value='wa-trap.example.net']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--2",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--2",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--3",
+   "pattern": "[domain-name:value='tracker-bad.example']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--3",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--3",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--4",
+   "pattern": "[domain-name:value='never-seen.example']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--4",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--4",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--5",
+   "pattern": "[process:name='spyprocessd']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--5",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--5",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--6",
+   "pattern": "[process:name='averylongprocessname']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--6",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--6",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--7",
+   "pattern": "[process:name='dailyspy']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--7",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--7",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--8",
+   "pattern": "[email-addr:value='attacker@example.com']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--8",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--8",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--9",
+   "pattern": "[email-addr:value='Sender-Bad@example.com']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--9",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--9",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--10",
+   "pattern": "[file:name='roleaccountd.plist']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--10",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--10",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--11",
+   "pattern": "[file:path='/private/var/mobile/Library/Caches/spy-cache/']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--11",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--11",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--12",
+   "pattern": "[app:id='com.fake.stalker']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--12",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--12",
+   "target_ref": "malware--b"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--13",
+   "pattern": "[app:id='com.fake.stalker2']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--13",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--13",
+   "target_ref": "malware--b"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--14",
+   "pattern": "[process:name='droidspyd']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--14",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--14",
+   "target_ref": "malware--b"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--15",
+   "pattern": "[configuration-profile:id='76DAB334-7E17-475D-A5D6-0794EB5818A5']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--15",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--15",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--16",
+   "pattern": "[url:value='https://exact-url.example/path?id=1']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--16",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--16",
+   "target_ref": "malware--a"
+  },
+  {
+   "type": "indicator",
+   "spec_version": "2.1",
+   "id": "indicator--17",
+   "pattern": "[file:hashes.sha256='00']",
+   "pattern_type": "stix",
+   "indicator_types": [
+    "malicious-activity"
+   ]
+  },
+  {
+   "type": "relationship",
+   "spec_version": "2.1",
+   "id": "relationship--17",
+   "relationship_type": "indicates",
+   "source_ref": "indicator--17",
+   "target_ref": "malware--a"
+  }
+ ]
+}

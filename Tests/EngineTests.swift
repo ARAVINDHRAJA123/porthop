@@ -1,5 +1,8 @@
 import Foundation
 import ImageIO
+import CryptoKit
+import AVFoundation
+import CoreMedia
 // Runs the export engine against the simulated iPhone and checks the counts.
 let T = CommandLine.arguments[1], bin = CommandLine.arguments[2]
 let tools = Tools(ideviceId: bin + "/idevice_id", ideviceInfo: bin + "/ideviceinfo", afc: bin + "/afcclient", applist: bin + "/applist")
@@ -368,6 +371,216 @@ do {
     let versionFails = versionCases.filter { Updates.isNewer($0["candidate"] as! String, than: $0["current"] as! String) != ($0["newer"] as! Bool) }
     for f in versionFails { print("  ", f) }
     check("shared update-version cases (\(versionCases.count))", blank, copied: 0, skipped: 0, failed: 0, extra: !versionCases.isEmpty && versionFails.isEmpty)
+}
+
+// MARK: Phase 7: spyware check, phone screen, music, apps, sending to Android, removing copied items, updates
+let g7 = FileManager.default.currentDirectoryPath + "/golden"
+func golden(_ path: String) -> [String: Any] {
+    (try? JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: g7 + "/" + path)))) as? [String: Any] ?? [:]
+}
+func rows(_ v: Any?) -> Set<String> { Set(((v as? [[String]]) ?? []).map { $0.joined(separator: "|") }) }
+setenv("FAKE_ANDROID", droid, 1)
+setenv("FAKE_ANDROID_LOG", T + "/adb.log", 1)
+do {
+    let x = golden("spyware/expect.json")
+    var set = Spyware.Indicators()
+    for i in Spyware.parseSTIX(try! Data(contentsOf: URL(fileURLWithPath: g7 + "/spyware/indicators.stix2")), source: "Test lab") { set.add(i) }
+    let index = Spyware.parseIndex(try! String(contentsOfFile: g7 + "/spyware/index.yaml", encoding: .utf8)).map { [$0.name, $0.url] }
+    var found = Set<String>(), html = ""
+    if case .ready(let r) = BackupReader.open(folder: URL(fileURLWithPath: T + "/spybackup/0000-SPY"), password: nil) {
+        let rep = Spyware.scan(backup: r, with: set)
+        found = Set(rep.findings.map { "\($0.area)|\($0.found)|\($0.indicator.malware)" })
+        html = Spyware.html(rep, device: "Test iPhone", source: "from a backup")
+    }
+    if found != rows(x["backup"]) { print("  spyware: got", found.sorted(), "missing", rows(x["backup"]).subtracting(found).sorted()) }
+    var clean = false
+    if case .ready(let r) = BackupReader.open(folder: URL(fileURLWithPath: T + "/backup/0000-TEST"), password: nil) { clean = Spyware.scan(backup: r, with: set).findings.isEmpty }
+    let folder = URL(fileURLWithPath: T + "/indicators")
+    let added = Spyware.add(file: URL(fileURLWithPath: g7 + "/spyware/indicators.stix2"), to: folder) == nil && Spyware.load(from: folder).count == 17
+        && Spyware.add(file: URL(fileURLWithPath: g7 + "/spyware/expect.json"), to: folder) != nil
+    check("spyware check of an iPhone backup (shared cases)", blank, copied: 0, skipped: 0, failed: 0,
+          extra: set.count == x["indicators"] as? Int && index == x["index"] as? [[String]] && found == rows(x["backup"]) && clean && added
+            && html.contains("14 matches") && html.contains("securitylab.amnesty.org"))
+    let a = Spyware.scan(android: ad, tools: at, with: set)
+    let aFound = Set(a.findings.map { "\($0.area)|\($0.found)|\($0.indicator.malware)" })
+    let review = Dictionary(uniqueKeysWithValues: a.review.map { ($0.title, $0.apps) })
+    check("spyware check of an Android phone: apps, programs, special access", blank, copied: 0, skipped: 0, failed: 0,
+          extra: aFound == rows(x["android"]) && review == x["androidReview"] as? [String: [String]] && a.warnings.count == x["androidWarnings"] as? Int)
+}
+do {
+    let x = golden("screen/expect.json")
+    let data = try! Data(contentsOf: URL(fileURLWithPath: g7 + "/screen/stream.h264"))
+    let parser = AnnexB()
+    var frames: [AnnexB.Frame] = []
+    let chunk = x["chunk"] as! Int
+    var at0 = 0
+    while at0 < data.count { frames += parser.append(data.subdata(in: at0..<min(at0 + chunk, data.count))); at0 += chunk }
+    frames += parser.finish()
+    let fmt = parser.sps.flatMap { s in parser.pps.flatMap { AnnexB.format(sps: s, pps: $0) } }
+    let dims = fmt.map(CMVideoFormatDescriptionGetDimensions)
+    let decoded = fmt.map { AnnexB.decodedCount(frames, format: $0) } ?? 0
+    let parsed = frames.count == x["frames"] as? Int && frames.filter(\.isKey).count == x["keyFrames"] as? Int && Int(dims?.width ?? 0) == x["width"] as? Int
+        && Int(dims?.height ?? 0) == x["height"] as? Int && AnnexB.codec(sps: parser.sps ?? Data()) == x["codec"] as? String && decoded == frames.count
+    // Live: the fake phone's stream through the real pipeline, then recorded to a movie as it arrives.
+    let screen = AndroidScreen(device: ad, tools: at)
+    var size = CGSize.zero
+    screen.onSize = { size = $0 }
+    screen.start()
+    var until = Date().addingTimeInterval(15)
+    while size == .zero && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    let movie = URL(fileURLWithPath: T + "/screen.mp4")
+    let recording = screen.startRecording(to: movie)
+    RunLoop.main.run(until: Date().addingTimeInterval(2))
+    var saved: URL?, stopped = false
+    screen.stopRecording { saved = $0; stopped = true }
+    until = Date().addingTimeInterval(15)
+    while !stopped && Date() < until { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    screen.stop()
+    let tracks = saved.map { AVURLAsset(url: $0).tracks(withMediaType: .video).count } ?? 0
+    let shot = AndroidScreen.screenshot(device: ad, tools: at, to: URL(fileURLWithPath: T + "/shot.png"))
+    if !parsed || size.width != 320 || !recording || tracks != 1 || !shot { print("  screen", parsed, frames.count, decoded, size, recording, tracks, shot) }
+    check("phone screen: stream split, decoded, shown, recorded; screenshot", blank, copied: 0, skipped: 0, failed: 0,
+          extra: parsed && size == CGSize(width: 320, height: 640) && recording && tracks == 1 && shot)
+}
+do {
+    let want = (golden("music/expect.json")["songs"] as? [[String: Any]] ?? []).map {
+        "\($0["title"]!)|\($0["savedPath"]!)|\(($0["canCopy"] as? Bool) == true)|\($0["size"]!)"
+    }
+    let (songs, problem) = MusicLibrary.load(device: dev, tools: tools)
+    let got = songs.map { "\($0.title)|\($0.savedPath)|\($0.canCopy)|\($0.size)" }
+    if got != want { print("  music got", got) }
+    let out = URL(fileURLWithPath: T + "/music-out"), job = ExportJob()
+    let first = MusicLibrary.copy(songs, to: out, device: dev, tools: tools, job: job) { _, _, _ in }
+    let again = MusicLibrary.copy(songs, to: out, device: dev, tools: tools, job: job) { _, _, _ in }
+    let sent = MusicLibrary.send(songs.filter { $0.title == "Morning" || $0.title == "Old Phone" }, from: dev, toAndroid: ad, tools: at, job: job) { _, _, _ in }
+    check("music: library read, copied by artist and album, sent to Android (shared cases)", blank, copied: 0, skipped: 0, failed: 0,
+          extra: problem == nil && got == want && first.copied == 5 && first.failed.count == 2 && again.skipped == 5 && again.copied == 0
+            && AFC.fileSize(out.appendingPathComponent("AC-DC/Live- Wire-/2-07 Back in Black.m4a")) == 61000 && sent.copied == 2
+            && FileManager.default.fileExists(atPath: droid + "/Music/Asha Band/First Light/02 Morning.mp3")
+            && FileManager.default.fileExists(atPath: droid + "/Ringtones/Old Phone.m4r"))
+    // A ringtone from any sound file: 3 seconds from a 6-second recording.
+    let rate = 22050, count = rate * 6
+    var wav = Data()
+    func u32(_ v: UInt32) { var x = v.littleEndian; wav.append(Data(bytes: &x, count: 4)) }
+    func u16(_ v: UInt16) { var x = v.littleEndian; wav.append(Data(bytes: &x, count: 2)) }
+    wav.append(Data("RIFF".utf8)); u32(UInt32(36 + count * 2)); wav.append(Data("WAVEfmt ".utf8)); u32(16); u16(1); u16(1); u32(UInt32(rate)); u32(UInt32(rate * 2)); u16(2); u16(16)
+    wav.append(Data("data".utf8)); u32(UInt32(count * 2))
+    for i in 0..<count { u16(UInt16(bitPattern: Int16(sin(Double(i) * 2 * .pi * 440 / Double(rate)) * 8000))) }
+    let src = URL(fileURLWithPath: T + "/tone-src.wav"), tone = URL(fileURLWithPath: T + "/My Tone.m4r")
+    try! wav.write(to: src)
+    let done = DispatchSemaphore(value: 0)
+    var toneProblem: String? = "not run", toneLength = 0.0
+    Task.detached { toneProblem = await RingtoneMaker.make(from: src, start: 1, length: 3, to: tone); toneLength = await RingtoneMaker.duration(of: tone); done.signal() }
+    done.wait()
+    check("ringtone made from a sound file (3 s, .m4r)", blank, copied: 0, skipped: 0, failed: 0, extra: toneProblem == nil && abs(toneLength - 3) < 0.3)
+}
+do {
+    let ios = AppManager.list(device: dev, tools: tools) ?? []
+    let ipa = URL(fileURLWithPath: T + "/My App.ipa"), unsigned = URL(fileURLWithPath: T + "/unsigned.ipa"), apk = URL(fileURLWithPath: T + "/app.apk"), old = URL(fileURLWithPath: T + "/old.apk")
+    for f in [ipa, unsigned, apk, old] { try? Data("x".utf8).write(to: f) }
+    var percents: [Int] = []
+    let i1 = AppManager.install(ipa, device: dev, tools: tools) { percents.append($0) }
+    let i2 = AppManager.install(unsigned, device: dev, tools: tools) { _ in }
+    let u1 = AppManager.uninstall("com.example.player", device: dev, tools: tools), u2 = AppManager.uninstall("com.example.reader", device: dev, tools: tools)
+    let droidApps = AppManager.list(device: ad, tools: at) ?? []
+    let a1 = AppManager.install(apk, device: ad, tools: at) { _ in }, a2 = AppManager.install(old, device: ad, tools: at) { _ in }
+    let a3 = AppManager.install(ipa, device: ad, tools: at) { _ in }
+    let a4 = AppManager.uninstall("com.fake.stalker2", device: ad, tools: at), a5 = AppManager.uninstall("com.android.chrome", device: ad, tools: at)
+    let w0 = WiFiSync.state(device: dev, tools: tools), w1 = WiFiSync.state(device: dev, tools: tools, set: true), w2 = WiFiSync.state(device: dev, tools: tools)
+    let appsOK = ios.map(\.name) == ["Book Reader", "Movie Player", "Tabs & Notes"] && ios.first { $0.id == "com.example.player" }?.bytes == 1_048_576
+        && i1 == nil && percents.last == 100 && i2?.contains("not signed for this iPhone") == true && u1 == nil && u2?.contains("cannot be removed") == true
+        && droidApps.map(\.id) == ["com.example.app", "com.fake.stalker2"] && droidApps.first?.version == "1.2" && droidApps.first?.bytes == 2020
+        && a1 == nil && a2?.contains("newer version") == true && a3?.contains(".apk") == true && a4 == nil && a5?.contains("cannot be removed") == true
+    if !appsOK { print("  apps", ios.map(\.name), i1 ?? "-", percents, i2 ?? "-", u1 ?? "-", u2 ?? "-", droidApps, a1 ?? "-", a2 ?? "-", a3 ?? "-", a4 ?? "-", a5 ?? "-") }
+    check("apps: list, install and remove on iPhone and Android; Wi-Fi backup setting", blank, copied: 0, skipped: 0, failed: 0,
+          extra: appsOK && w0 == false && w1 == true && w2 == true)
+}
+do {
+    func asset(_ id: Int64, _ dir: String, _ name: String, _ size: Int64, live: Bool = false) -> PhotoAsset {
+        PhotoAsset(id: id, uuid: "", directory: dir, filename: name, originalFilename: "", fileSize: size, width: 1, height: 1, duration: 0,
+                   isHidden: false, isFavorite: false, isTrashed: false, isVideo: false, isScreenshot: false, isSelfie: false,
+                   isLivePhoto: live, dateCreated: nil, dateText: "", searchKey: "")
+    }
+    let a1 = asset(1, "DCIM/100APPLE", "IMG_0001.HEIC", 1000), a2 = asset(2, "DCIM/100APPLE", "IMG_0002.JPG", 500)
+    let a3 = asset(3, "DCIM/101APPLE", "IMG_0003.HEIC", 800, live: true), a4 = asset(4, "DCIM/100APPLE", "IMG_0004.JPG", 700)
+    let files = [Cleanup.CameraFile(folder: "100APPLE", name: "IMG_0001.JPG", size: 640), Cleanup.CameraFile(folder: "100APPLE", name: "IMG_0002.JPG", size: 500),
+                 Cleanup.CameraFile(folder: "101APPLE", name: "IMG_0003.HEIC", size: 800), Cleanup.CameraFile(folder: "101APPLE", name: "IMG_0003.MOV", size: 90),
+                 Cleanup.CameraFile(folder: "100APPLE", name: "IMG_0004.JPG", size: 699), Cleanup.CameraFile(folder: "101APPLE", name: "IMG_0002.JPG", size: 500)]
+    let pick1 = Cleanup.deletable([a1, a2, a3, a4], files: files, liveVideos: true).map { "\($0.folder)/\($0.name)" }
+    let pick2 = Cleanup.deletable([a3], files: files, liveVideos: false).map { "\($0.folder)/\($0.name)" }
+    let a5 = asset(5, "DCIM/102APPLE", "IMG_0005.HEIC", 900)
+    let pick3 = Cleanup.deletable([a5], files: [Cleanup.CameraFile(folder: "102APPLE", name: "IMG_0005.HEIC", size: 900),
+                                                Cleanup.CameraFile(folder: "102APPLE", name: "IMG_0005.JPG", size: 300)], liveVideos: false).map(\.name)
+    let dest = URL(fileURLWithPath: T + "/cleanup")
+    try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+    try? Data(count: 1000).write(to: dest.appendingPathComponent("a1.HEIC")); try? Data(count: 499).write(to: dest.appendingPathComponent("a2.JPG"))
+    try? Data(count: 800).write(to: dest.appendingPathComponent("a3.HEIC"))
+    var s = ExportSummary(destination: dest)
+    s.report = [ReportLine(status: .copied, asset: a1, savedAs: "a1.HEIC", note: ""), ReportLine(status: .copied, asset: a2, savedAs: "a2.JPG", note: ""),
+                ReportLine(status: .skipped, asset: a3, savedAs: "a3.HEIC", note: ""), ReportLine(status: .failed, asset: a4, savedAs: "", note: "x")]
+    var opts = ExportOptions()
+    let c1 = Cleanup.confirmed(s, options: opts).map(\.id)
+    opts.includeLiveVideo = true
+    let c2 = Cleanup.confirmed(s, options: opts).map(\.id)
+    try? FileManager.default.createDirectory(atPath: droid + "/DCIM/Trip/sub", withIntermediateDirectories: true)
+    try? Data(count: 300).write(to: URL(fileURLWithPath: droid + "/DCIM/Trip/a.jpg")); try? Data(count: 400).write(to: URL(fileURLWithPath: droid + "/DCIM/Trip/sub/b.jpg"))
+    let trip = URL(fileURLWithPath: T + "/trip-copy")
+    let pulled = Android.pull("/sdcard/DCIM/Trip", to: trip, device: ad, tools: at)
+    try? Data(count: 10).write(to: trip.appendingPathComponent("sub/b.jpg"))   // a bad copy: that photo must stay on the phone
+    let sure = Cleanup.androidConfirmed([Cleanup.AndroidPair(remote: "/sdcard/DCIM/Trip", local: trip)], device: ad, tools: at).map(\.path)
+    let gone = Android.delete(sure, device: ad, tools: at)
+    check("removing copied items: only confirmed copies, matched to the phone's own files", blank, copied: 0, skipped: 0, failed: 0,
+          extra: pick1 == ["100APPLE/IMG_0001.JPG", "100APPLE/IMG_0002.JPG", "101APPLE/IMG_0003.HEIC", "101APPLE/IMG_0003.MOV"]
+            && pick2 == ["101APPLE/IMG_0003.HEIC"] && pick3 == ["IMG_0005.HEIC"] && c1 == [1] && c2 == [1, 3] && pulled && sure == ["/sdcard/DCIM/Trip/a.jpg"] && gone == sure
+            && !FileManager.default.fileExists(atPath: droid + "/DCIM/Trip/a.jpg") && FileManager.default.fileExists(atPath: droid + "/DCIM/Trip/sub/b.jpg"))
+}
+do {
+    let staging = URL(fileURLWithPath: T + "/hop-staging")
+    var o = ExportOptions()
+    o.convertHEIC = true
+    o.saveReport = false
+    let few = Array(hidden.filter { $0.filename.hasPrefix("IMG_00") && !$0.isVideo }.prefix(5))
+    let r = Exporter.run(assets: few, destination: staging, options: o, device: dev, tools: tools, job: ExportJob()) { _ in }
+    let job = ExportJob()
+    let s1 = Android.sendFolder(staging, to: "/sdcard/DCIM/PortHop/Hidden", phone: ad, tools: at, job: job) { _, _ in }
+    let s2 = Android.sendFolder(staging, to: "/sdcard/DCIM/PortHop/Hidden", phone: ad, tools: at, job: job) { _, _ in }
+    let onPhone = ((try? FileManager.default.contentsOfDirectory(atPath: droid + "/DCIM/PortHop/Hidden")) ?? []).filter { !$0.hasPrefix(".") }.count
+    let scans = ((try? String(contentsOfFile: T + "/adb.log", encoding: .utf8)) ?? "").components(separatedBy: "scan /sdcard/DCIM/PortHop/Hidden/").count - 1
+    if !(r.copied == 5 && s1.sent == 5 && s2.already == 5 && onPhone == 5 && scans == 5) { print("  hop", r.copied, r.failures.map(\.reason), s1, s2, onPhone, scans) }
+    check("iPhone to Android: copied off the iPhone, sent to the phone's camera folder, Gallery told", blank, copied: 0, skipped: 0, failed: 0,
+          extra: r.copied == 5 && s1.sent == 5 && s1.already == 0 && s2.sent == 0 && s2.already == 5 && onPhone == 5 && scans == 5)
+}
+do {
+    var d = DeviceDetails()
+    d.info = [InfoRow(label: "Model", value: "iPhone17,1", symbol: "cpu"), InfoRow(label: "IMEI", value: "35 000000 000000 0", symbol: "simcard")]
+    d.batteryHealth = 91
+    d.cycleCount = 312
+    d.totalDiskBytes = 256_000_000_000
+    d.freeDiskBytes = 56_000_000_000
+    let page = PhoneReport.html(name: "Asha's iPhone", details: d, isAndroid: false)
+    let key = Data(base64Encoded: (try! String(contentsOfFile: g7 + "/update/test-key.pub", encoding: .utf8)).trimmingCharacters(in: .whitespacesAndNewlines))!
+    let data = try! Data(contentsOf: URL(fileURLWithPath: g7 + "/update/sample.bin")), sig = try! Data(contentsOf: URL(fileURLWithPath: g7 + "/update/sample.bin.sig"))
+    var tampered = data
+    tampered[10] ^= 1
+    let otherKey = Curve25519.Signing.PrivateKey().publicKey.rawRepresentation
+    // A release zip holding PortHop.app: accepted only with the right identity and version.
+    let app = URL(fileURLWithPath: T + "/upd/PortHop.app")
+    try? FileManager.default.createDirectory(at: app.appendingPathComponent("Contents/MacOS"), withIntermediateDirectories: true)
+    try? FileManager.default.copyItem(atPath: "/usr/bin/true", toPath: app.appendingPathComponent("Contents/MacOS/PortHop").path)
+    (["CFBundleIdentifier": "io.github.aravindhraja123.porthop", "CFBundleShortVersionString": "9.9.9", "CFBundleExecutable": "PortHop",
+      "CFBundlePackageType": "APPL"] as NSDictionary).write(to: app.appendingPathComponent("Contents/Info.plist"), atomically: true)
+    _ = Shell.run("/usr/bin/codesign", ["--force", "--sign", "-", app.path])
+    let zip = URL(fileURLWithPath: T + "/upd/PortHop-9.9.9-mac.zip")
+    _ = Shell.run("/usr/bin/ditto", ["-c", "-k", "--keepParent", app.path, zip.path])
+    let unpacked = Updates.unpack(zip, expecting: "9.9.9", bundleID: "io.github.aravindhraja123.porthop") != nil
+    let wrongVersion = Updates.unpack(zip, expecting: "9.9.8", bundleID: "io.github.aravindhraja123.porthop") == nil
+    let wrongApp = Updates.unpack(zip, expecting: "9.9.9", bundleID: "com.example.other") == nil
+    let release = Updates.Release(version: "9.9.9", url: URL(string: "https://example.org")!, notes: "",
+                                  assets: ["PortHop-9.9.9-mac.zip": URL(string: "https://example.org/a.zip")!, "PortHop-9.9.9-mac.zip.sig": URL(string: "https://example.org/a.zip.sig")!])
+    check("phone report; signed update downloads (shared case) and unpacking", blank, copied: 0, skipped: 0, failed: 0,
+          extra: page.contains("91% of its original capacity") && page.contains("<td>312</td>") && !page.contains("35 000000") && page.contains("Parts and Service History")
+            && Updates.verify(data, signature: sig, key: key) && !Updates.verify(tampered, signature: sig, key: key) && !Updates.verify(data, signature: sig, key: otherKey)
+            && !Updates.verify(data, signature: Data("junk".utf8), key: key) && unpacked && wrongVersion && wrongApp && Updates.macAssets(release) != nil)
 }
 
 print(failures == 0 ? "ALL PASSED" : "\(failures) FAILED"); exit(failures == 0 ? 0 : 1)

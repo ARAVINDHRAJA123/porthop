@@ -39,19 +39,62 @@ function parseBinary(buf) {
   try { return read(top); } catch { return null; }
 }
 
-/// Top-level keys of a simple XML property list (strings, dates, booleans, data).
+/// An XML property list: dictionaries, arrays, strings, numbers, dates, data and booleans, nested to any depth.
 function parseXML(text) {
-  const out = {};
-  const re = /<key>([^<]*)<\/key>\s*(?:<string>([^<]*)<\/string>|<date>([^<]*)<\/date>|<(true|false)\/>|<data>([^<]*)<\/data>|<integer>([^<]*)<\/integer>)/g;
-  let m;
-  while ((m = re.exec(text))) {
-    if (m[2] != null) out[m[1]] = m[2].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
-    else if (m[3] != null) out[m[1]] = new Date(m[3]);
-    else if (m[4] != null) out[m[1]] = m[4] === 'true';
-    else if (m[5] != null) out[m[1]] = Buffer.from(m[5].replace(/\s+/g, ''), 'base64');
-    else if (m[6] != null) out[m[1]] = Number(m[6]);
-  }
-  return out;
+  let pos = 0;
+  const tag = /<(\/?)([a-zA-Z]+)\s*(\/?)>/g;
+  const next = () => {
+    tag.lastIndex = pos;
+    let m;
+    while ((m = tag.exec(text))) {
+      pos = tag.lastIndex;
+      if (m[2] !== 'plist') return { close: m[1] === '/', name: m[2], empty: m[3] === '/' };
+    }
+    return null;
+  };
+  const decode = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
+  const until = (name) => {
+    const end = text.indexOf(`</${name}>`, pos);
+    if (end < 0) { pos = text.length; return ''; }
+    const body = text.slice(pos, end);
+    pos = end + name.length + 3;
+    return body;
+  };
+  const value = (t) => {
+    if (t.empty) return { dict: {}, array: [], true: true, false: false, string: '', data: Buffer.alloc(0) }[t.name] ?? null;
+    switch (t.name) {
+      case 'dict': {
+        const o = {};
+        for (;;) {
+          const k = next();
+          if (!k || (k.close && k.name === 'dict')) return o;
+          if (k.name !== 'key' || k.close) continue;
+          const key = decode(until('key'));
+          const v = next();
+          if (!v || v.close) return o;
+          o[key] = value(v);
+        }
+      }
+      case 'array': {
+        const a = [];
+        for (;;) {
+          const v = next();
+          if (!v || (v.close && v.name === 'array')) return a;
+          if (!v.close) a.push(value(v));
+        }
+      }
+      case 'string': return decode(until('string'));
+      case 'integer': return Number(until('integer').trim());
+      case 'real': return Number(until('real').trim());
+      case 'date': return new Date(until('date').trim());
+      case 'data': return Buffer.from(until('data').replace(/\s+/g, ''), 'base64');
+      case 'true': return true;
+      case 'false': return false;
+      default: return null;
+    }
+  };
+  const first = next();
+  return first && !first.close ? value(first) : null;
 }
 
 function parse(buf) {

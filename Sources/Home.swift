@@ -141,6 +141,8 @@ struct DeviceView: View {
                 }
                 .animation(.easeInOut(duration: 0.2), value: m.powerMessage)
 
+                PhoneToolsCard(m: m)
+
                 Text("Photo library format: \(m.catalogWarnings.isEmpty ? "recognised" : "partly recognised"). This app reads the device's own photo database, which Apple can change in any update; if that happens the app says so instead of showing wrong results.")
                     .font(.caption).foregroundStyle(.secondary)
                     .opacity(m.isAndroid ? 0 : 1)

@@ -298,6 +298,8 @@ struct ExportOptions {
     var removeLocation = false
     /// Writes "PortHop Reports/<date> <group>.csv" listing what was copied and what was not.
     var saveReport = true
+    /// After copying, offer to remove the confirmed items from the phone (iPhone: through the camera interface).
+    var removeAfterCopy = false
     /// For {device} in a pattern.
     var deviceName = ""
 }
@@ -359,5 +361,12 @@ struct ExportSummary: Identifiable {
     var elapsed: TimeInterval = 0
     var report: [ReportLine] = []
     var reportURL: URL? = nil
+    /// Set when the items went on to an Android phone ("Pixel 8 › DCIM/PortHop/Trips"), with what happened there.
+    var sentTo: String? = nil
+    var sentCount = 0
+    var sentAlready = 0
+    var sendFailures: [String] = []
+    /// The options the copy ran with (for removing copied items afterwards).
+    var options: ExportOptions? = nil
     var isClean: Bool { failures.isEmpty && !cancelled && !disconnected && !stalled && fatalError == nil }
 }

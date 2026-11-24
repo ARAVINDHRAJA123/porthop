@@ -11,6 +11,8 @@ const updates = require('./core/updates');
 const net = require('node:net');
 const { exportAssets } = require('./core/exporter');
 const bk = require('./core/backup');
+const makePhoneTools = require('./tools-main');
+let phoneTools = null;   // spyware check, apps, music, screen, Android hops, Wi-Fi backups, update installs (tools-main.js)
 
 // Test switches: PORTHOP_<name>, or PAE_<name> as versions before 2.1 called them.
 const env = new Proxy(process.env, { get: (e, k) => (typeof k === 'string' && k.startsWith('PORTHOP_') ? (e[k] ?? e['PAE_' + k.slice(8)]) : e[k]) });
@@ -70,12 +72,15 @@ function snapshot() {
     canBackup: !!(tools && tools.backup), isWindows: WIN, backupFolder: backupFolder(),
     restarting: !!S.restartingSince && Date.now() - S.restartingSince < 600000, restartingName: S.restartingName,
     lastHop: settings.lastHop || '', exportDest: S.exportDest || null, update: S.update || null, appleDriverMissing: !!S.appleDriverMissing, androidAlbums: isAndroid() ? (S.androidAlbums || []).slice(0, 12) : [],
+    peer: (() => { const p = phoneTools && S.device && !isAndroid() ? phoneTools.peer() : null; return p ? { udid: p.udid, name: S.names[p.udid] || 'Android phone' } : null; })(),
+    androidCopied: isAndroid() ? (S.androidCopied || []).length : 0, wifiBackup: !!settings.wifiBackup,
+    canInstallUpdate: !!(phoneTools && phoneTools.canInstallUpdate()),
   };
 }
 function push() { if (win && !win.isDestroyed()) win.webContents.send('state', snapshot()); }
 function send(channel, payload) { if (win && !win.isDestroyed()) win.webContents.send(channel, payload); }
 
-function reset(phase, message = '') { S.androidAlbums = [];
+function reset(phase, message = '') { S.androidAlbums = []; S.androidCopied = [];
   S.device = null; S.details = null; S.smart = []; S.user = []; S.people = []; S.warnings = []; S.apps = [];
   S.phase = phase; S.message = message;
   push();
@@ -367,7 +372,8 @@ const handlers = {
   },
   'backup:folder': (p) => { settings.backupFolder = p; saveSettings(); push(); return bk.existing(p); },
   'backup:start': async () => {
-    if (working() || !S.device || isAndroid()) return 'Connect an iPhone or iPad first.';
+    if (working()) return 'Another copy or backup is still running. Wait for it to finish, then try again.';
+    if (!S.device || isAndroid()) return 'Connect an iPhone or iPad first.';
     const job = startJob('backup');
     let last = 0;
     try {
@@ -552,6 +558,8 @@ const handlers = {
     if (fs.existsSync(p)) shell.openPath(p);
   },
   github: () => shell.openExternal('https://github.com/ARAVINDHRAJA123/porthop'),
+  // Only the two help pages the spyware check points to.
+  'open:link': (url) => { if (['https://securitylab.amnesty.org/get-help/', 'https://www.accessnow.org/help/'].includes(url)) shell.openExternal(url); },
   // The Apple Devices app in the Microsoft Store, which installs Apple's iPhone driver.
   store: () => shell.openExternal('ms-windows-store://pdp/?productid=9NP83LWLPZ9K'),
 
@@ -560,7 +568,7 @@ const handlers = {
     try {
       const r = await updates.latest();
       settings.lastUpdateCheck = Date.now(); saveSettings();
-      S.update = !r.none && updates.isNewer(r.version, app.getVersion()) ? { version: r.version, url: r.url, notes: r.notes } : null;
+      S.update = !r.none && updates.isNewer(r.version, app.getVersion()) ? { version: r.version, url: r.url, notes: r.notes, assets: r.assets || {} } : null;
       push();
       return S.update ? { ...S.update, current: app.getVersion() } : { upToDate: true, current: app.getVersion(), none: !!r.none };
     } catch (e) { return { error: e.message, current: app.getVersion() }; }
@@ -587,7 +595,7 @@ function listDir(p) { return isAndroid() ? android.list(p, S.device, tools) : io
 async function download(chosen, folder) {
   if (working() || !S.device || !chosen.length) return null;
   try { fs.mkdirSync(folder, { recursive: true }); } catch {}
-  const job = startJob('transfer'), saved = [], reserved = new Set();
+  const job = startJob('transfer'), saved = [], reserved = new Set(), pairs = [];
   try {
     for (let i = 0; i < chosen.length && !job.cancelled; i++) {
       const e = chosen[i];
@@ -595,8 +603,10 @@ async function download(chosen, folder) {
       const dest = uniquePath(path.join(folder, e.name.replace(/[\\/:*?"<>|]/g, '-')), reserved);
       reserved.add(dest);
       const ok = isAndroid() ? await android.pull(e, dest, S.device, tools, job) : await ios.pull(e, dest, browser.app, S.device, tools, job);
-      if (ok && !job.cancelled) saved.push(dest); else if (!e.isDirectory) fs.rmSync(dest, { force: true });
+      if (ok && !job.cancelled) { saved.push(dest); if (isAndroid() && e.isDirectory) pairs.push({ remote: e.path, local: dest }); }
+      else if (!e.isDirectory) fs.rmSync(dest, { force: true });
     }
+    S.androidCopied = pairs;
     if (saved.length) shell.showItemInFolder(saved[0]);
     return { saved: saved.length, total: chosen.length, cancelled: job.cancelled };
   } finally { endJob('transfer'); }
@@ -672,6 +682,9 @@ app.whenReady().then(() => {
   nativeTheme.themeSource = (TEST && env.PORTHOP_APPEARANCE) || settings.appearance || 'system';
   bk.purgeTemp();
   if (WIN) { Menu.setApplicationMenu(null); app.setAppUserModelId('io.github.aravindhraja123.porthop'); }   // the ID lets notifications show
+  phoneTools = makePhoneTools({ S, send, push, startJob, endJob, working, isAndroid, backupFolder, tempRoot, jobs, rowsFor, saveSettings,
+    tools: () => tools, settings: () => settings, win: () => win, test: TEST });
+  Object.assign(handlers, phoneTools.handlers);
   for (const [name, fn] of Object.entries(handlers)) {
     ipcMain.handle(name, async (_e, arg) => {
       try { return await fn(arg); }

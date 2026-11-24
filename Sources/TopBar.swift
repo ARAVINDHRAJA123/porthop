@@ -34,6 +34,10 @@ struct DevicePill: View {
                 row("Battery and device details", "heart.text.square") { m.selection = "nav_device" }
                 if !m.isAndroid { row("Backups", "clock.arrow.circlepath") { m.selection = "nav_backup" } }
                 row(m.isAndroid ? "Phone storage" : "Media files", "folder") { m.selection = "nav_files" }
+                row("Screen", "rectangle.on.rectangle") { m.selection = "nav_screen" }
+                row("Apps", "square.grid.2x2") { m.selection = "nav_apps" }
+                if !m.isAndroid { row("Music & ringtones", "music.note") { m.selection = "nav_music" } }
+                row("Spyware check", "checkmark.shield") { m.selection = "nav_check" }
                 Divider().padding(.vertical, 4)
                 row("Refresh", "arrow.clockwise") { m.connect(silent: false) }.disabled(m.isExporting)
             }
@@ -205,13 +209,14 @@ struct UpdateBadge: View {
     var body: some View {
         if let r = m.update {
             Button { m.offerUpdate() } label: {
-                Label("Update to \(r.version)", systemImage: "arrow.down.circle.fill")
+                Label(m.updateStatus.isEmpty ? "Update to \(r.version)" : m.updateStatus, systemImage: "arrow.down.circle.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(Theme.text)
                     .padding(.horizontal, 10).padding(.vertical, 5)
                     .toolbarChrome(stroke: Theme.accent.opacity(0.5))
             }
             .buttonStyle(.plain)
+            .disabled(!m.updateStatus.isEmpty)
             .help("A newer PortHop is available")
         }
     }

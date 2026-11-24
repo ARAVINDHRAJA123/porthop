@@ -642,7 +642,9 @@ ${body}</body></html>`;
     const { uniquePath } = require('./shell');
     for (const r of rows) {
       if (!group.fileIDs || r >= group.fileIDs.length) continue;
-      const dest = uniquePath(path.join(folder, group.rows[r][0].replace(/[\\/:*?"<>|]/g, '-')), reserved);
+      let name = String(group.rows[r][0]).replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/[. ]+$/, '');
+      if (!name || /^(con|prn|aux|nul|com\d|lpt\d)(\..*)?$/i.test(name)) name = (name ? '_' + name : group.fileIDs[r]);   // names Windows keeps for devices
+      const dest = uniquePath(path.join(folder, name), reserved);
       reserved.add(dest);
       const source = await this.plain(group.fileIDs[r]);
       try { if (source) { fs.copyFileSync(source, dest, fs.constants.COPYFILE_EXCL); written.push(dest); } } catch {}

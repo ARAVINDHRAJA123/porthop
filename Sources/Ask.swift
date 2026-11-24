@@ -72,6 +72,9 @@ enum AskParser {
 
         // Things that are places in the app rather than photos.
         let routes: [(String, [String])] = [
+            ("nav_check", ["spyware", "pegasus", "stalkerware", "malware", "hacked", "being tracked"]),
+            ("nav_screen", ["mirror", "screen recording", "record the screen", "record my screen", "phone screen", "iphone screen", "see the screen", "show the screen"]),
+            ("nav_music", ["music", "song", "ringtone"]), ("nav_apps", ["install", "remove app", "delete app", "installed apps", "my apps"]),
             ("bk:whatsapp", ["whatsapp"]), ("bk:messages", ["message", "imessage", " sms", "texts"]), ("bk:contacts", ["contact"]),
             ("bk:notes", [" note"]), ("bk:calendar", ["calendar", "event"]), ("bk:calls", ["call log", "calls", "call history"]),
             ("bk:safari", ["safari", "bookmark", "browsing"]), ("bk:voiceMemos", ["voice memo", "recording"]), ("nav_backup", ["back up", "backup", "restore"]),
@@ -137,7 +140,7 @@ enum AskParser {
 
         let photoRequest = i.album != nil || i.filter != nil || i.range != nil || i.minBytes > 0
         if !photoRequest, let r = routes.first(where: { $0.1.contains(where: { body.contains($0) }) }) {
-            if r.0.hasPrefix("bk:") || r.0 == "nav_backup" { if !c.isAndroid { i.route = r.0 } } else { i.route = r.0 }
+            if r.0.hasPrefix("bk:") || r.0 == "nav_backup" || r.0 == "nav_music" { if !c.isAndroid { i.route = r.0 } } else { i.route = r.0 }
         }
         if photoRequest && i.album == nil && !c.isAndroid { i.album = "smart_all" }
 
@@ -163,6 +166,10 @@ enum AskParser {
         case "nav_backup": return "Backups"
         case "nav_device": return "Device details"
         case "nav_files": return c.isAndroid ? "Phone Storage" : "Media Files"
+        case "nav_check": return "Spyware Check"
+        case "nav_screen": return "Screen"
+        case "nav_music": return "Music & Ringtones"
+        case "nav_apps": return "Apps"
         default: return BackupKind(rawValue: String(r.dropFirst(3)))?.title ?? r
         }
     }

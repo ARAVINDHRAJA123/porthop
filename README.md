@@ -48,6 +48,22 @@ Click the device card on Shores, or open the device menu at the top left, for ba
 
 Hidden items appear only in **Hidden**, never in Screenshots, Favorites or other albums, matching the Photos app.
 
+## Phone tools
+
+The device menu (top left) and the device screen also open these:
+
+- **Screen:** the phone's screen, live, with Screenshot and Record (saved in Pictures ▸ PortHop and Movies ▸ PortHop). An iPhone shows over USB the same way QuickTime Player shows it, with nothing installed on the iPhone (macOS asks once for camera permission, because it treats an iPhone's screen like a camera). An Android phone streams its screen through adb, and clicks and drags on the picture are sent to the phone as taps and swipes, with Back, Home and Recents buttons.
+- **Apps:** the apps you installed, with their size and version; *Install App…* and *Remove…*. An iPhone installs `.ipa` files signed for that iPhone (your own builds, ad-hoc and company apps; App Store apps can't be installed this way). Android installs `.apk` files.
+- **Music & Ringtones (iPhone):** songs synced from a computer or bought in the iTunes Store, and ringtones, copied into Artist ▸ Album folders, or sent straight to an Android phone plugged in at the same time. Apple Music downloads and songs that are only in the cloud are listed but not copied (they can't be played elsewhere). *Make a Ringtone…* turns up to 40 seconds of any song or sound file into an `.m4r` ringtone; Finder puts it on an iPhone, and on an Android phone it lands in Ringtones.
+- **Spyware Check:** compares the phone with the spyware indicators that Amnesty International, Citizen Lab and others publish (the Mobile Verification Toolkit's public index, downloaded only when you click, or a `.stix2` file someone sends you). An iPhone is checked through its newest backup, so nothing on it is touched: Safari history, tabs and bookmarks, Messages and who sent them, WhatsApp, websites that apps loaded, which programs used the network, iMessage lookups, installed apps, configuration profiles and every file in the backup. An encrypted backup includes more. An Android phone is checked live: installed apps, programs running now, and which apps can read the screen, read notifications, administer the device or install other apps. Results save as a PDF. A match is a reason to get expert help (Amnesty's Security Lab, Access Now's helpline), not proof; no match is not a guarantee.
+- **Phone report:** *Save Phone Report…* on the device screen makes a one-page PDF (model, storage, software, battery health and charge cycles), for a buyer or a repair shop. Whether parts are genuine is shown only on the iPhone itself (Settings ▸ General ▸ About ▸ Parts and Service History).
+
+**An iPhone and an Android phone at once:** with both plugged in, the Android phone appears under *Hop them to* on Shores. Drop a group on it and the photos and videos go into the phone's DCIM ▸ PortHop ▸ <group> folder (HEIC converted to JPEG unless you untick it), where its Gallery and Google Photos find them. Items already there are skipped.
+
+**Removing what was copied:** the copy sheet can *Remove from the iPhone after copying*. When the copy is done PortHop asks once more, then removes only items whose copy in the folder is complete, through the same camera route Image Capture uses, so the Photos library on the iPhone stays correct (Live Photos and edited items only when their video or edit was copied too; Hidden and iCloud-only items stay). After copying folders from an Android phone, *Remove from Phone…* does the same, file by file, only where the copy on the Mac has the same size.
+
+These have been tested against simulated phones only, not yet on real devices.
+
 ## Sending files to the device
 
 Shores lists apps that share a folder (for example video players and document readers) under "Send files to apps". Open one to drag files in from Finder, create folders, or copy its files back to the Mac. Files dropped from Finder onto the device's side of Shores go to an app of your choice. Existing files are never overwritten. Photos cannot be added to the Photos library this way; iOS does not allow it over this connection.
@@ -67,7 +83,7 @@ Tested against a simulated phone only; not yet verified on a real Android device
 
 ## Backups (beta)
 
-**Backups** makes a standard full device backup (the format Finder uses) into a folder or external drive of your choice; later runs only copy changes. *Back up when plugged in, once a day* runs it by itself when the phone connects and has no backup from the last 20 hours (iOS asks for the passcode on the phone to start a backup). *Keep earlier versions* keeps the previous backup as a dated snapshot before each new one: on APFS drives it is a clone, so it takes almost no extra space; the newest 7 are kept and can be restored like any backup. **Restore…** on a backup puts it back onto the connected device, replacing its settings and app data; it needs Find My turned off and asks for a typed confirmation first. Neither backup nor restore has been verified on a real device yet.
+**Backups** makes a standard full device backup (the format Finder uses) into a folder or external drive of your choice; later runs only copy changes. *Back up when plugged in, once a day* runs it by itself when the phone connects and has no backup from the last 20 hours (iOS asks for the passcode on the phone to start a backup). *Also back up over Wi-Fi, once a day* turns on the iPhone's own *Show this iPhone when on Wi-Fi* setting (while it's plugged in) and from then on, while PortHop is open, backs up an iPhone that was backed up here before whenever it's on the same Wi-Fi without the cable. *Keep earlier versions* keeps the previous backup as a dated snapshot before each new one: on APFS drives it is a clone, so it takes almost no extra space; the newest 7 are kept and can be restored like any backup. **Restore…** on a backup puts it back onto the connected device, replacing its settings and app data; it needs Find My turned off and asks for a typed confirmation first. Neither backup nor restore has been verified on a real device yet.
 
 ## Reading a backup (beta)
 
@@ -89,11 +105,11 @@ Password-protected (encrypted) backups are supported: the app asks for the backu
 
 ## Command line
 
-`porthop` drives the same engine from Terminal, for scripts and automation: `porthop devices`, `porthop groups`, `porthop copy <group> <folder> [--pattern …] [--names …] [--heic-to-jpeg] [--edited] [--live] [--no-location] [--json]` and `porthop backup <folder>`. A copy run again copies only what's new, and the exit code says whether everything made it. On the Mac it lives at `PortHop.app/Contents/Helpers/porthop` (⋯ ▸ *Command-Line Tool…* shows how to link it into your path); on Windows it is `porthop.cmd` next to `PortHop.exe`.
+`porthop` drives the same engine from Terminal, for scripts and automation: `porthop devices`, `porthop groups`, `porthop copy <group> <folder> [--pattern …] [--names …] [--heic-to-jpeg] [--edited] [--live] [--no-location] [--json]`, `porthop backup <folder>`, `porthop music <folder>`, `porthop apps`, `porthop indicators [file.stix2]` and `porthop check <backup folder>` (or `porthop check` for a connected Android phone; exit code 1 when something matches). A copy run again copies only what's new, and the exit code says whether everything made it. On the Mac it lives at `PortHop.app/Contents/Helpers/porthop` (⋯ ▸ *Command-Line Tool…* shows how to link it into your path); on Windows it is `porthop.cmd` next to `PortHop.exe`.
 
 ## Updates
 
-⋯ ▸ *Check for Updates…* asks GitHub for the latest PortHop release and offers its download page when it is newer. By default PortHop checks by itself at most once a week; the request carries nothing about you or your devices, and ⋯ ▸ *Check for Updates Weekly* turns it off.
+⋯ ▸ *Check for Updates…* asks GitHub for the latest PortHop release. When it is newer, *Install and Restart* downloads it, checks it against the publisher's Ed25519 signature (the public half of the key is built into the app, so a tampered or corrupted download is never installed), replaces the app and reopens it; *Release Page* opens the download page instead. By default PortHop checks by itself at most once a week; the request carries nothing about you or your devices, and ⋯ ▸ *Check for Updates Weekly* turns it off.
 
 ## iOS compatibility
 
@@ -119,8 +135,9 @@ PortHop is released under the MIT licence (see `LICENSE`). The bundled open-sour
 
 - `swift build` (or opening this folder in Xcode) builds and indexes the Mac app incrementally; `./build.sh` still makes the finished `PortHop.app`.
 - `Tests/golden` holds test cases shared by both editions (Ask PortHop requests, folder and file-name patterns, update versions, and small JPEG/HEIC/MOV files for location removal); `Tests/run_tests.sh` and `windows/npm test` both run them, so the Mac and Windows code can't quietly drift apart.
-- The Mac sources are split by job: `Models`, `Device`, `Catalog`, `Exporter`, `LocationScrubber`, `Thumbnails`, `Volumes`, `Backup`, `Ask`, `Updates` for the engine, `Manager` plus `ManagerHops`, `ManagerDevice` and `ManagerFiles` for app state, and one file per screen for the interface. `CLI/main.swift` is the command line. The Windows page is split the same way under `windows/renderer/`, with `windows/cli.js` as its command line.
+- The Mac sources are split by job: `Models`, `Device`, `Catalog`, `Exporter`, `LocationScrubber`, `Thumbnails`, `Volumes`, `Backup`, `Ask`, `Updates`, `Spyware`, `ScreenStream`, `Music`, `Apps` and `Cleanup` for the engine, `Manager` plus `ManagerHops`, `ManagerDevice`, `ManagerFiles` and `ManagerTools` for app state, and one file per screen for the interface (`ToolsViews` holds the phone tools). `CLI/main.swift` is the command line. The Windows page is split the same way under `windows/renderer/` (`tools.js` for the phone tools, `h264.js` and `m4a.js` for the screen and ringtones), with `windows/tools-main.js` as its main-process side and `windows/cli.js` as its command line.
+- `Helpers/applist.c` is PortHop's own small iPhone helper (MIT): the app list, installing and removing apps, and the Wi-Fi setting. Both `build_tools.py` and `windows/fetch-tools.py` compile it.
 
 ## Publishing a release
 
-`python3 make_release.py` builds everything into `release/`: the Mac app, the Windows app and `PortHop-<version>-sources.zip`. Upload all three to the same GitHub release. The GPL and LGPL licences of the bundled tools require their source to be offered from the same place as the apps, and the sources zip is that offer: PortHop's own code plus the exact source of every bundled tool and library.
+`python3 make_release.py` builds everything into `release/`: the Mac app, the Windows app (and its installer, when one was built on Windows), `PortHop-<version>-sources.zip`, and a `.sig` file for each app download. Upload them all to the same GitHub release: the apps install an update only when its signature matches. The signing key's private half is kept in `~/.porthop-release/update-signing-key.pem` (back it up; without it no update can be signed), the public half is `update-key.pub` in this folder, which the builds put into the apps; `python3 make_release.py --key-only` creates it. The GPL and LGPL licences of the bundled tools require their source to be offered from the same place as the apps, and the sources zip is that offer: PortHop's own code plus the exact source of every bundled tool and library.

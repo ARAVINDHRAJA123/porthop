@@ -1,0 +1,118 @@
+{
+ "note": "Invented indicators (indicators.stix2) against the invented traces in Tests/make_fake_backup.py (SPYWARE=1) and the fake adb.",
+ "indicators": 17,
+ "backup": [
+  [
+   "Safari history",
+   "https://login.bad-spy-domain.test/x",
+   "TestSpy"
+  ],
+  [
+   "Safari bookmarks",
+   "https://exact-url.example/path?id=1",
+   "TestSpy"
+  ],
+  [
+   "Messages",
+   "http://track.evil-sms.example.org/a",
+   "TestSpy"
+  ],
+  [
+   "Messages (sender)",
+   "sender-bad@example.com",
+   "TestSpy"
+  ],
+  [
+   "WhatsApp",
+   "wa-trap.example.net/z",
+   "TestSpy"
+  ],
+  [
+   "Backup files",
+   "HomeDomain › Library/Preferences/roleaccountd.plist",
+   "TestSpy"
+  ],
+  [
+   "Backup files",
+   "/private/var/mobile/Library/Caches/spy-cache/data.bin",
+   "TestSpy"
+  ],
+  [
+   "Websites apps loaded",
+   "tracker-bad.example",
+   "TestSpy"
+  ],
+  [
+   "App network use",
+   "spyprocessd",
+   "TestSpy"
+  ],
+  [
+   "App network use",
+   "averylongproces",
+   "TestSpy"
+  ],
+  [
+   "Daily usage statistics",
+   "dailyspy",
+   "TestSpy"
+  ],
+  [
+   "iMessage and FaceTime lookups",
+   "attacker@example.com",
+   "TestSpy"
+  ],
+  [
+   "Installed apps",
+   "com.fake.stalker",
+   "StalkTest"
+  ],
+  [
+   "Configuration profiles",
+   "profile-abc.stub",
+   "TestSpy"
+  ]
+ ],
+ "android": [
+  [
+   "Installed apps",
+   "com.fake.stalker2",
+   "StalkTest"
+  ],
+  [
+   "Running programs",
+   "droidspyd",
+   "StalkTest"
+  ]
+ ],
+ "androidReview": {
+  "Can read the screen and act for you": [
+   "com.fake.stalker2"
+  ],
+  "Can read every notification": [
+   "com.fake.stalker2",
+   "com.google.android.gms"
+  ],
+  "Device administrators": [
+   "com.fake.stalker2"
+  ],
+  "Can install other apps": [
+   "com.fake.stalker2"
+  ]
+ },
+ "androidWarnings": 1,
+ "index": [
+  [
+   "NSO Group Pegasus Indicators of Compromise",
+   "https://raw.githubusercontent.com/AmnestyTech/investigations/master/2021-07-18_nso/pegasus.stix2"
+  ],
+  [
+   "Stalkerware Indicators of Compromise",
+   "https://raw.githubusercontent.com/AssoEchap/stalkerware-indicators/master/generated/stalkerware.stix2"
+  ],
+  [
+   "Example Direct",
+   "https://example.org/direct.stix2"
+  ]
+ ]
+}

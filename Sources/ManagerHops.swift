@@ -180,9 +180,15 @@ extension DeviceManager {
         let a = NSAlert()
         a.messageText = "PortHop \(r.version) is available"
         a.informativeText = "You have \(Updates.current). " + (r.notes.isEmpty ? "" : String(r.notes.prefix(600)))
-        a.addButton(withTitle: "Download")
+        let canInstall = Updates.canInstall(r)
+        a.addButton(withTitle: canInstall ? "Install and Restart" : "Download")
+        if canInstall { a.addButton(withTitle: "Release Page") }
         a.addButton(withTitle: "Later")
-        if a.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.open(r.url) }
+        switch a.runModal() {
+        case .alertFirstButtonReturn: if canInstall { installUpdate() } else { NSWorkspace.shared.open(r.url) }
+        case .alertSecondButtonReturn: if canInstall { NSWorkspace.shared.open(r.url) }
+        default: break
+        }
     }
 
     func inform(_ title: String, _ text: String) {

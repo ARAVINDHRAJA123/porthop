@@ -77,6 +77,14 @@ struct RootView: View {
             DeviceView(m: m)
         } else if s == "nav_backup" {
             BackupView(m: m)
+        } else if s == "nav_screen" {
+            ScreenView(m: m)
+        } else if s == "nav_apps" {
+            AppsView(m: m)
+        } else if s == "nav_music" {
+            MusicView(m: m)
+        } else if s == "nav_check" {
+            SpywareView(m: m)
         } else if s.hasPrefix("bk:") {
             BackupDataView(m: m)
         } else if s == "nav_files" || s.hasPrefix("app:") {

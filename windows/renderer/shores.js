@@ -46,7 +46,7 @@ function shoresView() {
       icon('plus'), 'Choose another folder…'),
     isAndroid() ? null : hopsBlock(),
     isAndroid() ? null : [h('div', { class: 'label', style: 'margin-top:8px' }, 'Keep a full copy'), backupsCard()]);
-  const fill = () => { destList.replaceChildren(...destCache.map((d) => destCard(d, all))); updateLive(); };
+  const fill = () => { destList.replaceChildren(...(s.peer && !isAndroid() ? [androidTargetCard(all)] : []), ...destCache.map((d) => destCard(d, all))); updateLive(); };
   api.call('destinations').then((d) => { destCache = d; fill(); });
 
   return viewBox(h('div', { class: 'shores' }, left, channelView(), right));
@@ -149,7 +149,7 @@ function channelView() {
       body.replaceChildren(h('span', { class: 'chan-ic' }, icon('arrow')), h('b', {}, 'Drag a group across'),
         h('div', { class: 'dim' }, `or click a place on the right and pick what to copy. Nothing is removed from your ${kindWord()}.`),
         state.lastHop ? h('div', { class: 'faint', style: 'margin-top:8px' }, `Last hop: ${state.lastHop}`) : null,
-        lastCopyNote ? h('div', { class: 'faint', style: 'margin-top:6px' }, lastCopyNote) : null);
+        lastCopyNote ? h('div', { class: 'faint', style: 'margin-top:6px' }, lastCopyNote) : null, removeCopiedButton());
     }
   };
   render();
@@ -273,6 +273,7 @@ function deviceView() {
         h('button', { class: 'btn', disabled: !state.canPower, onclick: () => act('restart') }, icon('restart'), 'Restart'),
         h('button', { class: 'btn', disabled: !state.canPower, onclick: () => act('sleep') }, icon('moon'), 'Sleep'),
         !isAndroid() ? h('button', { class: 'btn', onclick: () => go('nav_backup') }, icon('clock'), 'Back Up…') : null,
-        h('button', { class: 'btn', onclick: () => api.call('refresh') }, icon('refresh'), 'Refresh Details')), msg)),
+        h('button', { class: 'btn', onclick: () => api.call('refresh') }, icon('refresh'), 'Refresh Details')), msg),
+      toolsCard()),
     state.warnings.length ? h('div', { class: 'note' }, state.warnings.join(' ')) : null)));
 }

@@ -47,6 +47,7 @@ struct ChannelView: View {
                     if !m.afcMessage.isEmpty && !m.afcBusy {
                         Text(m.afcMessage).font(.caption2).foregroundStyle(m.afcMessageIsError ? Theme.warning : Theme.success).multilineTextAlignment(.center)
                     }
+                    RemoveCopiedButton(m: m)
                 }
                 .transition(.opacity)
             }

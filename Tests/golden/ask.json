@@ -16,5 +16,11 @@
   {"text": "favourite photos of Mum", "context": {"people": [{"id": "person:mum", "title": "Mum"}, {"id": "person:ravi kumar", "title": "Ravi Kumar"}], "userAlbums": [{"id": "album_9", "title": "Mumbai Trip"}]}, "expect": {"album": "person:mum", "filter": "favorites"}},
   {"text": "mumbai trip", "context": {"people": [{"id": "person:mum", "title": "Mum"}, {"id": "person:ravi kumar", "title": "Ravi Kumar"}], "userAlbums": [{"id": "album_9", "title": "Mumbai Trip"}]}, "expect": {"album": "album_9"}},
   {"text": "ravi kumar's selfies over 1 mb", "context": {"people": [{"id": "person:mum", "title": "Mum"}, {"id": "person:ravi kumar", "title": "Ravi Kumar"}], "userAlbums": [{"id": "album_9", "title": "Mumbai Trip"}]}, "expect": {"album": "person:ravi kumar", "minBytes": 1000000}},
-  {"text": "my voice memos", "expect": {"route": "bk:voiceMemos"}}
+  {"text": "my voice memos", "expect": {"route": "bk:voiceMemos"}},
+  {"text": "check my phone for spyware", "expect": {"route": "nav_check"}},
+  {"text": "mirror my iphone", "expect": {"route": "nav_screen"}},
+  {"text": "screen recording", "expect": {"route": "nav_screen"}},
+  {"text": "copy my music", "expect": {"route": "nav_music"}},
+  {"text": "install an app", "expect": {"route": "nav_apps"}},
+  {"text": "music festival videos", "context": {"userAlbums": [{"id": "user_9", "title": "Music Festival"}]}, "expect": {"album": "user_9", "filter": "videos"}}
 ]

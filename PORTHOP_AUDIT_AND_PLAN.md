@@ -259,3 +259,123 @@ PortHop sits where five kinds of tools overlap. Each group has one or two leader
 | 6.9 | `porthop` command line | Done (`Contents/Helpers/porthop`) | Done (`porthop.cmd`) |
 
 **Still open after Phase 6:** real-device checks (Android, backups and restore, Windows on a real PC, the Notes and Voice Memos layouts on current iOS), Developer ID signing and notarization, building the Windows installer, an Intel/universal Mac build, and the Phase 7 items above. Not done on purpose: `.AAE` edit sidecars (where iOS puts them varies by version and needs a real device to confirm) and partial-hash duplicate checks (the manifest plus name-and-size matching already prevents false skips; hashing would mean reading every file twice over USB).
+
+## 8. Phase 7 Build List
+
+Each item was first listed as "needs real hardware or new download sources". Each was built without any new download source:
+the spyware indicators are fetched by the app only when the user clicks, and the screen, ringtone and update pieces use what
+macOS, Windows, Electron and the phones already have.
+
+| # | Item | Mac | Windows |
+| :--- | :--- | :--- | :--- |
+| 7.1 | Spyware check (STIX2 indicators from the Mobile Verification Toolkit index: Amnesty, Citizen Lab and others; or a file someone sends). iPhone: through the newest backup (Safari history, tabs and bookmarks, Messages and senders, WhatsApp, websites apps loaded, app network use, daily usage statistics, iMessage lookups, installed apps, configuration profiles, every file path). Android: live (installed apps, running programs, apps with accessibility, notification, device-admin or install access, Play Protect off). PDF report. | Done | Done |
+| 7.2 | The phone's screen: live view, recording, screenshots | Done: iPhone through the same capture route QuickTime uses (USB, any iOS, nothing installed); Android through adb's H.264 stream, with tap, swipe, Back, Home and Recents | Done for Android (WebCodecs decoding, MP4 recording); an iPhone's screen needs a Mac |
+| 7.3 | iPhone → Android direct hops (drop a group on the Android phone: DCIM/PortHop/<group>, Gallery told) | Done | Done |
+| 7.4 | Music and ringtones: copy songs and ringtones off the iPhone (Artist/Album), send them to Android, make a ringtone (.m4r, up to 40 s) | Done (AVFoundation) | Done (WebCodecs AAC + PortHop's own .m4r writer) |
+| 7.5 | Parts verification → phone report | Report done (battery health and cycles, storage, software). Genuine-part status is shown only on the iPhone itself, so the report says where to look | Same |
+| 7.6 | Install and remove apps | Done (iPhone: .ipa signed for that iPhone, through PortHop's helper; Android: .apk) | Done |
+| 7.7 | Remove copied items from the phone, only where the copy is confirmed complete, after asking | Done: iPhone through Image Capture's camera route (keeps Photos consistent); Android (only files whose copy matches in size) | Android done; iPhone not offered (Windows has no equivalent of Image Capture's route that could be checked here) |
+| 7.8 | Wi-Fi backups: turns on "Show this iPhone when on Wi-Fi", then a daily background backup over Wi-Fi | Done | Done |
+| 7.9 | Updates that install themselves, checked against an Ed25519 signature (Sparkle's protection, without Developer ID or a hosted feed). The key: `make_release.py --key-only`; the private half stays in `~/.porthop-release`, the public half is `update-key.pub` | Done (replaces the app, then reopens it) | Done (installer, or the zip version updated in place) |
+| 7.10 | Ask PortHop understands "spyware", "mirror", "music", "install"… ; `porthop` gains `check`, `indicators`, `apps` and `music` | Done | Done (Ask) |
+
+Tests: both suites share new cases in `Tests/golden` (spyware: invented indicators against invented traces in a backup and on the
+simulated Android phone; screen: a 12-frame H.264 stream; music: the simulated library; update: a signature made with a throwaway
+key). The Mac suite also decodes the stream with VideoToolbox, records it to an MP4 and makes a real ringtone.
+
+**Still needs a real device:** all of Phase 7 has only been tried against the simulated phones. In particular: the iPhone screen
+(no simulator offers that capture device), removing copied photos from an iPhone, app installs on a real iPhone, the music database
+layout on current iOS, Wi-Fi backups, and the Windows update install (it runs only on Windows).
+
+## 9. End-to-End Audit After Phase 7 (November 2026)
+
+**Scope:** both apps end to end: the Mac app (SwiftUI screens, engine, `porthop` command line, the C helpers) and the Windows
+app (main process, page, engine, `porthop.cmd`, the same helpers built for Windows), plus the build and release scripts, the
+tests and the documentation.
+
+**Method:**
+- Re-read all of the Phase 7 code and the riskiest older paths.
+- Checked in the code that each finding from section 2 is fixed.
+- Ran both test suites and both command lines.
+- Took screenshots of every new screen on both apps against the simulated phones.
+- Ran targeted checks: device text reaching HTML, the page-to-main-process call list, shell quoting, file names, and update signing.
+
+### Fixed during the audit
+
+| # | Finding | Severity | Where |
+| :--- | :--- | :--- | :--- |
+| 0 | The Windows package left out `tools-main.js`: the packager's rule for the `tools/` folder also matched files whose names start with "tools", so the packaged app would have failed at launch. The rule now matches whole folder names only. Every `require` and page script is now checked to be in the package, and the packaged code was started under Electron. | Critical | Windows |
+| 1 | The spyware check hung on a very long message. Its link-finding pattern backtracked quadratically. It is now a single pass over the words (a 130,000-character message takes about 1 ms). | High | Both |
+| 2 | Removing copied items could remove the wrong photo. When the iPhone offered both IMG_0005.HEIC and IMG_0005.JPG, the JPEG was counted as the converted copy of the HEIC. Now a JPEG counts only when the HEIC itself is not offered. A test case was added. | High (data) | Both |
+| 3 | A Wi-Fi backup that couldn't finish was retried every 10 minutes, with a passcode prompt on the phone and a notification each time. Each iPhone now waits 6 hours before another try. | Medium | Both |
+| 4 | "Install and Restart" could quit in the middle of a copy or backup. It now waits until nothing is running. | Medium | Both |
+| 5 | After switching phones, the Apps, Music and Spyware screens could show the previous phone's results. They are now cleared when the phone changes. | Medium | Mac |
+| 6 | A failed main-process call left a tool screen waiting forever. The error is now shown. | Medium | Windows |
+| 7 | The live Android screen was stretched. Separately, the screen page stopped its own stream through the clean-up order. The picture now keeps the phone's shape, and each stream carries a session ID so a page can only stop its own. | Medium | Windows |
+| 8 | Files copied out of a backup could get odd names: `.`, `..`, or Windows device names such as CON and NUL. They now get safe names. | Low | Both |
+| 9 | A downloaded update that wasn't PortHop left its unpacked folder in the temporary folder. It is now removed. | Low | Mac |
+| 10 | The iPhone screen capture could start before its setup was committed. It now commits first. | Low | Mac |
+| 11 | The summary after sending to Android showed the copy-off-the-iPhone counts. It now shows sent, already on the phone, and couldn't send. | Low | Mac |
+| 12 | The Back Up button said "Connect an iPhone" when another job was running. It now says what is running. | Low | Windows |
+| 13 | Icon-only buttons had no spoken names for VoiceOver and Narrator. They are now labelled. | Low | Both |
+| 14 | Polish: "1 investigations"; a Stop button that was always shown; the Android card's text cut off; Screen offered for iPhones on Windows, where it can't work. | Low | Both |
+| 15 | `porthop.cmd` lacked `check`, `indicators`, `apps` and `music`, which the README described. They were added and tested. | Low | Windows |
+| 16 | Windows was at version 2.1.0 while the Mac was at 2.2. Windows is now 2.2.0. | Low | Windows |
+
+### Checked and sound
+
+- **Section 2 findings:** every fix is present in the code.
+  - Shared manifest format.
+  - Encrypted backups: older keybags without DPSL, and WRAP checks.
+  - `afcmini.c` deletes partial files.
+  - Thumbnail cache keyed per device.
+  - `skipExisting` respected.
+  - Authenticode check of Google's adb.
+  - In-process HEIC conversion.
+  - O(1) thumbnail lookups.
+  - Asynchronous staging size.
+- **Never overwrite:** holds in the exporter, the music copy, sending to Android (" (2)" names), and extraction from backups.
+- **Destructive actions ask first:**
+  - Restore requires typing RESTORE.
+  - Removing an app asks first.
+  - Removing copied items from an iPhone takes two confirmations.
+  - On Android, only files whose copy matches in size are removed.
+  - An update moves the old Mac app to the Trash.
+- **Device commands:**
+  - Android shell commands quote every value.
+  - Every other tool runs with an argument list, never through a shell.
+  - Taps and swipes are clamped numbers, and key presses come from an allowlist.
+- **Windows page:**
+  - A content security policy allows only the app's own scripts.
+  - Device text is inserted as text, never as HTML.
+  - The page can make only allowlisted calls to the main process.
+  - Navigation and new windows are blocked.
+  - PDF windows run without JavaScript.
+  - Only the two help pages can be opened as links.
+- **Updates:**
+  - The Ed25519 signature is checked before anything is unpacked or run.
+  - The Mac also checks the bundle ID, the version and the code signature.
+  - The private key is kept outside the repository (file mode 0600, folder mode 0700).
+- **Network:** the apps contact GitHub (update check, release download, indicator index) and, only on request, Google (adb). Nothing about the person or the phone is sent.
+- **C helpers (`afcmini.c`, `applist.c`):** buffers are bounded, sizes are checked, and plist ownership is correct.
+- **Sources:** no personal data, debug output or unfinished markers.
+
+### Still open
+
+- **Real devices:** everything from Phases 5–7 has run only against simulated phones. Most urgent:
+  - the iPhone screen;
+  - removing photos through Image Capture;
+  - app installs;
+  - the music database layout on current iOS;
+  - Wi-Fi backups;
+  - Windows on a real PC, including update installs and the AAC encoder from Media Foundation.
+- **Signing and installer:**
+  - Developer ID signing and notarization, which needs an Apple Developer account.
+  - Windows code signing, so SmartScreen doesn't warn.
+  - Building the Inno installer, which has to be done on Windows.
+- **Intel Mac build:** the bundled tools are built for Apple Silicon only.
+- **`porthop check --password`:** the password appears in the process list. A prompt would be safer.
+- **Windows sandbox:** the main window's preload runs without Chromium's sandbox (context isolation is on, Node integration is off). Turning the sandbox on needs a check of the preload's test hook.
+- **Windows zip update:** the small script that finishes the update would expand a `%` in the app's folder name (rare).
+- **Not offered on Windows:** removing copied items from an iPhone, and earlier-version snapshots (NTFS has no clones).
+- **Update-signing key:** back up `~/.porthop-release/update-signing-key.pem`. Without it, no future update can be signed.

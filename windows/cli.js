@@ -8,6 +8,7 @@ const ios = require('./core/ios'), android = require('./core/android');
 const { loadCatalog } = require('./core/catalog');
 const { exportAssets, TOKENS } = require('./core/exporter');
 const bk = require('./core/backup');
+const spyware = require('./core/spyware'), apps = require('./core/apps'), music = require('./core/music');
 const version = require('./package.json').version;
 
 const args = process.argv.slice(2);
@@ -24,6 +25,12 @@ const usage = `porthop ${version}: copy photos and videos off an iPhone or iPad,
       --names "{year}-{month}-{day} {hour}.{minute}.{second}"   rename the copies
       --heic-to-jpeg  --edited  --live  --original-names  --no-location  --no-report  --no-dates
   porthop backup <folder>            a full backup in the same format as Apple's
+  porthop music <folder>             copy the iPhone's songs and ringtones (Artist/Album/01 Title)
+  porthop apps                       the apps installed on the iPhone, iPad or Android phone
+  porthop indicators [file.stix2]    download the public spyware indicators (or add a file someone sent you)
+  porthop check <backup folder>      check an iPhone backup for known spyware (exit code 1 when something matches)
+  porthop check                      check a connected Android phone for known spyware and stalkerware
+      --password <password>          for an encrypted backup
 
   Pattern tokens: ${TOKENS}
   Options: --device <id> picks a device when several are connected; --json prints machine-readable results.`;
@@ -33,6 +40,43 @@ const usage = `porthop ${version}: copy photos and videos off an iPhone or iPad,
   const command = args.shift();
   if (!command || ['-h', '--help', 'help'].includes(command)) { console.log(usage); return; }
   if (command === 'version' || command === '--version') { console.log(`porthop ${version}`); return; }
+  // Prints a spyware check and exits: 0 when nothing matched, 1 when something did.
+  const report = (r) => {
+    if (json) {
+      emit({ matches: r.findings.map((f) => ({ area: f.area, found: f.found, spyware: f.indicator.malware, source: f.indicator.source, when: f.when })),
+        checked: r.checked, notAvailable: r.missing, indicators: r.indicatorCount, warnings: r.warnings, review: r.review.map((g) => ({ title: g.title, apps: g.apps })) });
+    } else {
+      console.log(r.findings.length ? `${r.findings.length} match(es) with known spyware:` : `No known spyware found (checked against ${r.indicatorCount} indicators).`);
+      for (const f of r.findings) console.log(`  ${f.area}: ${f.found}  [${f.indicator.malware}, ${f.indicator.source}]${f.when ? '  ' + f.when : ''}`);
+      for (const w of r.warnings) console.log(`Warning: ${w}`);
+      for (const g of r.review) console.log(`${g.title}: ${g.apps.join(', ')}`);
+      if (r.findings.length) console.log('A match can be a false alarm, but get expert help: securitylab.amnesty.org, accessnow.org/help');
+    }
+    process.exit(r.findings.length ? 1 : 0);
+  };
+  const indicators = () => { const set = spyware.load(); if (set.isEmpty) fail('No spyware indicators yet. Run: porthop indicators', 3); return set; };
+  if (command === 'indicators') {
+    if (args[0]) { const problem = spyware.addFile(path.resolve(args[0])); if (problem) fail(problem); }
+    else {
+      const problem = await spyware.download();
+      if (problem && spyware.load().isEmpty) fail(problem, 1);
+      if (problem) process.stderr.write(problem + '\n');
+    }
+    const n = spyware.load().count, sources = spyware.sources().length;
+    if (json) emit({ indicators: n, sources }); else console.log(`${n} indicators from ${sources} source${sources === 1 ? '' : 's'}.`);
+    return;
+  }
+  const password = option('--password');
+  if (command === 'check' && args[0]) {
+    const set = indicators();
+    const o = await bk.BackupReader.open(path.resolve(args[0]), password);
+    if (o.needsPassword) fail('This backup is encrypted: add --password <its password>.');
+    if (o.wrongPassword) fail("That password didn't open the backup.");
+    if (!o.reader) fail("That folder isn't a readable backup (it should hold Manifest.db).", 3);
+    let r;
+    try { r = await spyware.scanBackup(o.reader, set); } finally { o.reader.close(); }
+    report(r);
+  }
   const tools = locateTools(path.join(path.dirname(process.execPath), 'resources'), true);
   if (!tools.hasApple && !tools.adb) fail('The device tools were not found. Run porthop.cmd from the PortHop folder.');
   const found = [...await ios.findDevices(tools), ...await android.findDevices(tools)];
@@ -46,9 +90,31 @@ const usage = `porthop ${version}: copy photos and videos off an iPhone or iPad,
     else for (const d of list) console.log(`${d.kind}\t${d.name}\t${d.id}`);
     return;
   }
-  const device = wanted ? found.find((d) => d.udid === wanted) : found.find((d) => d.kind !== 'android');
+  const androidToo = ['apps', 'check'].includes(command);
+  const device = wanted ? found.find((d) => d.udid === wanted) : (found.find((d) => d.kind !== 'android') || (androidToo ? found[0] : null));
   if (!device) fail(wanted ? `No connected device has the id ${wanted}.` : 'No iPhone or iPad. Plug it in, unlock it and tap Trust.', 3);
-  if (device.kind === 'android') fail('Android phones are copied from the app for now; the command line copies from iPhones and iPads.');
+  if (device.kind === 'android' && !androidToo) fail('Android phones are copied from the app for now; the command line copies from iPhones and iPads.');
+  if (command === 'check') {
+    if (device.kind !== 'android') fail('Give the backup folder to check: porthop check <backup folder>. Make one with: porthop backup <folder>');
+    report(await spyware.scanAndroid(device, tools, indicators()));
+  }
+  if (command === 'apps') {
+    const list = await apps.list(device, tools);
+    if (!list) fail('The app list could not be read. Unlock the device.', 3);
+    if (json) emit(list.map((a) => ({ id: a.id, name: a.name, version: a.version, bytes: a.bytes })));
+    else for (const a of list) console.log(`${a.id}\t${a.name}\t${a.version}`);
+    return;
+  }
+  if (command === 'music') {
+    if (!args[0]) fail('Usage: porthop music <folder>');
+    const lib = await music.load(device, tools);
+    if (lib.problem) fail(lib.problem, 3);
+    const o = await music.copy(lib.songs, path.resolve(args[0]), device, tools, new Job(), (n, all, title) => { if (!json) process.stderr.write(`\r${n + 1}/${all} ${title}                    `); });
+    const locked = lib.songs.filter((s) => !s.canCopy).length;
+    if (json) emit({ copied: o.copied, skipped: o.skipped, failed: o.failed.length - locked, notCopyable: locked });
+    else console.log(`\nCopied ${o.copied}, already there ${o.skipped}` + (locked ? `, ${locked} not copyable (Apple Music or only in the cloud)` : '') + (o.failed.length > locked ? `, ${o.failed.length - locked} failed.` : '.'));
+    process.exit(o.failed.length > locked ? 1 : 0);
+  }
 
   const catalog = async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'PortHop-cli-'));

@@ -16,6 +16,10 @@ function drawMain(force) {
   if (selection === 'nav_home') { lastShoresSig = shoresSig(); return show(shoresView()); }
   if (selection === 'nav_device') return show(deviceView());
   if (selection === 'nav_backup') return show(backupView());
+  if (selection === 'nav_screen') return show(screenView());
+  if (selection === 'nav_apps') return show(appsView());
+  if (selection === 'nav_music' && !isAndroid()) return show(musicView());
+  if (selection === 'nav_check') return show(spywareView());
   if (selection === 'nav_files' || selection.startsWith('app:')) return show(filesView());
   if (selection.startsWith('bk:')) return show(dataView(selection.slice(3)));
   if ([...s.smart, ...s.user].some((a) => a.id === selection)) return show(albumView());
@@ -24,9 +28,18 @@ function drawMain(force) {
 let lastShoresSig = '';
 function shoresSig() {
   const s = state, d = s.details || {};
-  return JSON.stringify([s.smart.map((a) => a.id + a.count), s.user.map((a) => a.id + a.count), s.apps.length, d.battery, d.freeBytes, d.name, s.lastHop]);
+  return JSON.stringify([s.smart.map((a) => a.id + a.count), s.user.map((a) => a.id + a.count), s.apps.length, d.battery, d.freeBytes, d.name, s.lastHop, s.peer && s.peer.udid, s.androidCopied]);
 }
-function show(view) { $('#main').replaceChildren(view); }
+/// A screen that needs to stop something when it is left (the live phone screen, say) registers it with onLeave while it is
+/// being built; it runs when the next screen replaces it.
+let viewCleanup = null, nextCleanup = null;
+function onLeave(fn) { nextCleanup = fn; }
+function show(view) {
+  const previous = viewCleanup;
+  viewCleanup = nextCleanup; nextCleanup = null;
+  if (previous) { try { previous(); } catch {} }
+  $('#main').replaceChildren(view);
+}
 const viewBox = (...kids) => h('div', { class: 'view' }, ...kids);
 
 function statusView() {

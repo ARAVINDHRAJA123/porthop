@@ -1,0 +1,31 @@
+indicators:
+  -
+    type: github
+    name: NSO Group Pegasus Indicators of Compromise
+    sources:
+      - Amnesty International
+    references:
+      - https://www.amnesty.org/en/latest/research/2021/07/forensic-methodology-report-how-to-catch-nso-groups-pegasus/
+    github:
+      owner: AmnestyTech
+      repo: investigations
+      branch: master
+      path: 2021-07-18_nso/pegasus.stix2
+
+  -
+    type: github
+    name: Stalkerware Indicators of Compromise
+    sources:
+      - ECHAP
+    github:
+      owner: AssoEchap
+      repo: stalkerware-indicators
+      branch: master
+      path: generated/stalkerware.stix2
+  - type: download
+    name: "Example Direct"
+    download_url: https://example.org/direct.stix2
+  -
+    type: github
+    name: Not https
+    download_url: http://example.org/plain.stix2

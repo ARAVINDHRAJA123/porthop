@@ -10,8 +10,11 @@ swiftc -swift-version 5 -O -target arm64-apple-macos13.0 -parse-as-library \
 # The porthop command line: the same engine, in Helpers (next to the tools it drives).
 mkdir -p "$APP/Contents/Helpers"
 swiftc -swift-version 5 -O -target arm64-apple-macos13.0 Sources/Models.swift Sources/Device.swift Sources/Catalog.swift Sources/Exporter.swift \
-  Sources/Backup.swift Sources/Android.swift Sources/LocationScrubber.swift CLI/main.swift -lsqlite3 -o "$APP/Contents/Helpers/porthop"
+  Sources/Backup.swift Sources/Android.swift Sources/LocationScrubber.swift Sources/Spyware.swift Sources/BackupReader.swift Sources/BackupCrypto.swift \
+  Sources/Apps.swift Sources/Music.swift CLI/main.swift -lsqlite3 -o "$APP/Contents/Helpers/porthop"
 cp Info.plist "$APP/Contents/Info.plist"
+# The public half of the update-signing key (made by make_release.py): installs check every download against it.
+if [ -f update-key.pub ]; then plutil -replace PortHopUpdateKey -string "$(tr -d '[:space:]' < update-key.pub)" "$APP/Contents/Info.plist"; fi
 if [ ! -f AppIcon.icns ]; then Icon/make_icons.sh; fi
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 # The iPhone tools are built from the official source for macOS 13 and later (cached after the first run).

@@ -1,0 +1,12 @@
+{
+  "note": "What both apps read from the simulated iPhone's music library (Tests/make_fake_phone.sh), in their order.",
+  "songs": [
+    {"title": "Back in Black", "savedPath": "AC-DC/Live- Wire-/2-07 Back in Black.m4a", "canCopy": true, "size": 61000},
+    {"title": "Ravi's Song", "savedPath": "Asha Band/First Light/01 Ravi's Song.m4a", "canCopy": true, "size": 52000},
+    {"title": "Morning", "savedPath": "Asha Band/First Light/02 Morning.mp3", "canCopy": true, "size": 40000},
+    {"title": "Streamed", "savedPath": "Asha Band/First Light/03 Streamed.m4p", "canCopy": false, "size": 70000},
+    {"title": "Cloud Only", "savedPath": "Asha Band/First Light/04 Cloud Only", "canCopy": false, "size": 0},
+    {"title": "Chime", "savedPath": "Ringtones/Chime.m4r", "canCopy": true, "size": 9000},
+    {"title": "Old Phone", "savedPath": "Ringtones/Old Phone.m4r", "canCopy": true, "size": 8000}
+  ]
+}

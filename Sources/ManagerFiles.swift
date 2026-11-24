@@ -84,8 +84,10 @@ extension DeviceManager {
         afcBusy = true
         afcMessageIsError = false
         afcMessage = "Copying \(chosen.count) item\(chosen.count == 1 ? "" : "s") to your Mac…"
+        androidCopied = []
         Task.detached {
             var saved: [URL] = []
+            var pairs: [Cleanup.AndroidPair] = []
             var reserved = Set<String>()
             for (i, entry) in chosen.enumerated() {
                 if job.isCancelled { break }
@@ -104,13 +106,17 @@ extension DeviceManager {
                 }
                 job.clear()
                 let ok = FileManager.default.fileExists(atPath: dest.path) && (entry.isDirectory || entry.size <= 0 || AFC.fileSize(dest) == entry.size)
-                if ok && !job.isCancelled { saved.append(dest) } else if !entry.isDirectory { try? FileManager.default.removeItem(at: dest) }
+                if ok && !job.isCancelled {
+                    saved.append(dest)
+                    if device.isAndroid && entry.isDirectory { pairs.append(Cleanup.AndroidPair(remote: entry.path, local: dest)) }
+                } else if !entry.isDirectory { try? FileManager.default.removeItem(at: dest) }
             }
-            let done = saved
+            let done = saved, copiedFolders = pairs
             let cancelled = job.isCancelled
             await MainActor.run {
                 self.afcBusy = false
                 self.transferJob = nil
+                self.androidCopied = copiedFolders
                 let missed = chosen.count - done.count
                 self.afcMessageIsError = missed > 0 && !cancelled
                 self.afcMessage = cancelled ? "Stopped. \(done.count) of \(chosen.count) copied."

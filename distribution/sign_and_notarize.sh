@@ -17,7 +17,7 @@ APP=PortHop.app
 find "$APP/Contents/Helpers" -type f -perm -u+x | while read -r f; do
   codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID" "$f"
 done
-codesign --force --options runtime --timestamp --sign "$DEVELOPER_ID" "$APP"
+codesign --force --options runtime --timestamp --entitlements "$(dirname "$0")/PortHop.entitlements" --sign "$DEVELOPER_ID" "$APP"
 codesign --verify --strict --deep --verbose=2 "$APP"
 
 ZIP="$(mktemp -d)/PortHop-notarize.zip"

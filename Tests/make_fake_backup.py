@@ -8,6 +8,7 @@ def store(domain, path, build=None, data=None):
     os.makedirs(os.path.join(root, fid[:2]), exist_ok=True)
     p = os.path.join(root, fid[:2], fid)
     if build:
+        if os.path.exists(p): os.remove(p)   # rebuilt with more rows (the spyware variant)
         db = sqlite3.connect(p); build(db); db.commit(); db.close()
     else:
         open(p, "wb").write(data)
@@ -93,9 +94,49 @@ store("AppDomainGroup-group.com.apple.VoiceMemos.shared", "Recordings/CloudRecor
 store("AppDomainGroup-group.com.apple.VoiceMemos.shared", "Recordings/20260101 090000-1A2B.m4a", data=b"m4a-one" * 100)
 store("AppDomainGroup-group.com.apple.VoiceMemos.shared", "Recordings/20260102 100000-3C4D.m4a", data=b"m4a-two" * 100)
 store("AppDomain-com.example.player", "Documents/movie list.txt", data=b"one\ntwo\n")
+SPY = bool(os.environ.get("SPYWARE"))
+if SPY:
+    # Traces that match Tests/golden/spyware/indicators.stix2 (all invented): what a spyware check must find.
+    def spy_history(db):
+        history(db)
+        db.execute("INSERT INTO history_items VALUES(2,'https://login.bad-spy-domain.test/x')"); db.execute("INSERT INTO history_visits VALUES(3,2,?,'Login')", (T + 70,))
+    files[:] = [f for f in files if f[2] != "Library/Safari/History.db"]
+    store("AppDomain-com.apple.mobilesafari", "Library/Safari/History.db", spy_history)
+    def spy_bookmarks(db):
+        bookmarks(db); db.execute("INSERT INTO bookmarks VALUES(3,'Exact','https://exact-url.example/path?id=1',0)")
+    files[:] = [f for f in files if f[2] != "Library/Safari/Bookmarks.db"]
+    store("HomeDomain", "Library/Safari/Bookmarks.db", spy_bookmarks)
+    def spy_sms(db):
+        sms(db)
+        db.execute("INSERT INTO handle VALUES(3,'sender-bad@example.com')"); db.execute("INSERT INTO chat VALUES(3,'sender-bad@example.com','')")
+        db.execute("INSERT INTO message VALUES(8,'check this http://track.evil-sms.example.org/a now',3,?,0,NULL,0)", ((T + 300) * 10**9,))
+        db.execute("INSERT INTO chat_message_join VALUES(3,8)")
+    files[:] = [f for f in files if f[2] != "Library/SMS/sms.db"]
+    store("HomeDomain", "Library/SMS/sms.db", spy_sms)
+    def spy_wa(db):
+        wa(db); db.execute("INSERT INTO ZWAMESSAGE VALUES(5,1,?,0,'14155550101@s.whatsapp.net','see wa-trap.example.net/z please',NULL,NULL)", (T + 400,))
+    files[:] = [f for f in files if f[2] != "ChatStorage.sqlite"]
+    store("AppDomainGroup-group.net.whatsapp.WhatsApp.shared", "ChatStorage.sqlite", spy_wa)
+    def usage(db):
+        db.execute("CREATE TABLE ZPROCESS(Z_PK INTEGER PRIMARY KEY, ZPROCNAME TEXT, ZBUNDLENAME TEXT, ZFIRSTTIMESTAMP REAL, ZTIMESTAMP REAL)")
+        db.executemany("INSERT INTO ZPROCESS VALUES(?,?,?,?,?)", [(1, "spyprocessd", None, T, T + 10), (2, "averylongproces", None, T, T + 20),
+                       (3, "MobileSafari", "com.apple.mobilesafari", T, T + 30), (4, "averylongothers", None, T, T)])
+    store("WirelessDomain", "Library/Databases/DataUsage.sqlite", usage)
+    def observations(db):
+        db.execute("CREATE TABLE ObservedDomains(domainID INTEGER PRIMARY KEY, registrableDomain TEXT, mostRecentUserInteractionTime REAL)")
+        db.executemany("INSERT INTO ObservedDomains VALUES(?,?,?)", [(1, "example.com", 1760000000), (2, "tracker-bad.example", 1760000100)])
+    store("AppDomain-com.example.player", "Library/WebKit/WebsiteData/ResourceLoadStatistics/observations.db", observations)
+    store("HomeDomain", "Library/Preferences/com.apple.osanalytics.addaily.plist", data=plistlib.dumps({"netUsageBaseline": {"dailyspy": [1, 2], "backboardd": [3, 4]}}))
+    store("HomeDomain", "Library/Preferences/com.apple.identityservices.idstatuscache.plist",
+          data=plistlib.dumps({"com.apple.madrid": {"mailto:attacker@example.com": {"IDStatus": 1}, "tel:+14155550101": {"IDStatus": 1}}}))
+    store("HomeDomain", "Library/Preferences/roleaccountd.plist", data=plistlib.dumps({"a": 1}))
+    store("HomeDomain", "Library/Caches/spy-cache/data.bin", data=b"x" * 10)
+    store("SysSharedContainerDomain-systemgroup.com.apple.configurationprofiles", "Library/ConfigurationProfiles/profile-abc.stub",
+          data=plistlib.dumps({"PayloadUUID": "76DAB334-7E17-475D-A5D6-0794EB5818A5", "PayloadDisplayName": "Totally Normal"}, fmt=plistlib.FMT_BINARY))
 m = sqlite3.connect(os.path.join(root, "Manifest.db"))
 m.execute("CREATE TABLE Files(fileID TEXT PRIMARY KEY, domain TEXT, relativePath TEXT, flags INT, file BLOB)")
 m.executemany("INSERT INTO Files VALUES(?,?,?,?,NULL)", files)
 m.execute("INSERT INTO Files VALUES('d1','CameraRollDomain','Media/DCIM',2,NULL)"); m.commit(); m.close()
 plistlib.dump({"IsEncrypted": bool(os.environ.get("ENCRYPTED"))}, open(os.path.join(root, "Manifest.plist"), "wb"))
-plistlib.dump({"Device Name": "Test iPhone", "Product Version": "27.2", "Last Backup Date": datetime.datetime(2026, 11, 10, 9, 30)}, open(os.path.join(root, "Info.plist"), "wb"))
+plistlib.dump({"Device Name": "Test iPhone", "Product Version": "27.2", "Last Backup Date": datetime.datetime(2026, 11, 10, 9, 30),
+               **({"Installed Applications": ["com.example.player", "com.fake.stalker"]} if SPY else {})}, open(os.path.join(root, "Info.plist"), "wb"))

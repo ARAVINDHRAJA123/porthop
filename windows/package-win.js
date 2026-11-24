@@ -17,7 +17,8 @@ const { packager } = require('@electron/packager');
   const [out] = await packager({
     dir: __dirname, name: 'PortHop', platform: 'win32', arch: 'x64', out: path.join(__dirname, 'dist'), overwrite: true,
     icon: path.join(__dirname, 'icon.ico'), extraResource: [tools], prune: true, asar: true,
-    ignore: [/^\/(test|dist|tools-win|tools|installer|\.msys-cache|fetch-tools\.py|package-win\.js|README\.md|\.gitignore)/],
+    // Whole folders and single files kept out of the app ("tools" must not also catch tools-main.js).
+    ignore: [/^\/(test|dist|tools-win|tools|installer|\.msys-cache)(\/|$)/, /^\/(fetch-tools\.py|package-win\.js|README\.md|\.gitignore)$/],
     appCopyright: 'Bundled device tools are open source; see resources/tools/licenses.',
     win32metadata: { CompanyName: 'PortHop', FileDescription: 'PortHop', ProductName: 'PortHop' },
   });
@@ -26,6 +27,10 @@ const { packager } = require('@electron/packager');
   const locales = path.join(out, 'locales');
   for (const f of fs.readdirSync(locales)) if (f !== 'en-US.pak') fs.rmSync(path.join(locales, f));
   fs.copyFileSync(path.join(__dirname, 'README.md'), path.join(out, 'READ ME FIRST.txt'));
+  // The public half of the update-signing key (made by make_release.py): updates are checked against it before installing.
+  const key = path.join(__dirname, '..', 'update-key.pub');
+  if (fs.existsSync(key)) fs.copyFileSync(key, path.join(out, 'update-key.pub'));
+  else console.warn('No update-key.pub: this build will not install updates by itself (run python3 make_release.py --key-only).');
   // porthop.cmd: the command line, run by the app's own Electron in Node mode (no separate Node install needed).
   fs.writeFileSync(path.join(out, 'porthop.cmd'), '@echo off\r\nsetlocal\r\nset ELECTRON_RUN_AS_NODE=1\r\n"%~dp0PortHop.exe" "%~dp0resources\\app.asar\\cli.js" %*\r\n');
   const zip = path.join(__dirname, 'dist', 'PortHop-Windows.zip');

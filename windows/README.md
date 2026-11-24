@@ -31,7 +31,11 @@ The main screen, Shores, shows your phone's photo groups on the left and places 
 - Device overview: battery, charge cycles, health, storage, identifiers, Restart and Sleep.
 - Android: browse shared storage, photo albums from the phone's media index, copy both ways, device overview, and Wi-Fi with Wireless debugging (Android 11 and later).
 - Command line: `porthop.cmd devices | groups | copy <group> <folder> | backup <folder>`, the same engine for scripts (`porthop.cmd help`).
-- Update check: ⋯ ▸ Check for updates (also weekly by itself unless turned off).
+- Phone tools (device menu or device screen): the Android phone's screen live, with screenshots, recording, taps and swipes; apps installed, with Install and Remove (.ipa signed for that iPhone, or .apk); an iPhone's music and ringtones copied out or sent to an Android phone, and *Make a Ringtone…* (.m4r); the Spyware Check (published spyware indicators against the newest iPhone backup, or an Android phone live); and *Save Phone Report…* (PDF). An iPhone's screen can only be shown on a Mac.
+- With an iPhone and an Android phone plugged in together, drop a group on the Android phone to send it straight across (into DCIM ▸ PortHop). After copying folders off an Android phone, *Remove from Phone…* removes only files whose copy matches.
+- Backups over Wi-Fi once a day, after turning on the iPhone's *Show this iPhone when on Wi-Fi* setting.
+- Command line: also `porthop.cmd music <folder> | apps | indicators | check`.
+- Updates: ⋯ ▸ Check for updates (also weekly by itself unless turned off). *Install and Restart* downloads the update, checks its signature, and installs it (the installer version runs the new installer; the zip version updates its own folder).
 
 ## Not included
 
@@ -40,7 +44,8 @@ WhatsApp transfer between phones, photo thumbnails grid.
 ## Known unknowns on Windows
 
 - The iPhone tools are libimobiledevice 1.4.0 (the same version as the Mac app), compiled from the official source on a Mac. They have not yet been run on Windows.
-- The file-copy helper (`afcclient.exe`) and the app-list helper (`applist.exe`) were written for this app, because the official file-copy tool cannot be driven by another program on Windows. They have not been run on Windows or against a real device.
+- The file-copy helper (`afcclient.exe`) and the app helper (`applist.exe`: app list, install, remove, Wi-Fi setting) were written for this app, because the official file-copy tool cannot be driven by another program on Windows. They have not been run on Windows or against a real device.
+- The live Android screen and ringtones use Chromium's built-in H.264 decoder and AAC encoder (WebCodecs). On Windows the AAC encoder comes from Windows itself (Media Foundation); checked on a Mac only.
 
 ## Building it yourself (on a Mac)
 

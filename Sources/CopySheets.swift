@@ -24,7 +24,10 @@ struct ExportSheet: View {
     @State private var hopName = ""
     @State private var freeBytes: Int64? = nil
     @State private var destinationFormat = ""
-    private var lowSpace: Bool { if let f = freeBytes { return f < totalBytes + 500_000_000 }; return false }
+    @State private var androidJPEG = true
+    @State private var removeAfter = false
+    private var target: Device? { request.androidTarget }
+    private var lowSpace: Bool { if target == nil, let f = freeBytes { return f < totalBytes + 500_000_000 }; return false }
     private var fatProblem: Bool {
         guard destination != nil, hugeCount > 0 else { return false }
         let f = destinationFormat.lowercased()
@@ -44,6 +47,22 @@ struct ExportSheet: View {
                 }
             }
 
+            if let target {
+                sectionTitle("1", "Straight to the Android phone")
+                Card {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "smartphone").font(.title2).foregroundStyle(Theme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.deviceNames[target.udid] ?? "Android phone").font(.headline)
+                                Text("Into DCIM › PortHop › \(Pattern.safe(request.albumName).isEmpty ? "From iPhone" : Pattern.safe(request.albumName)), where its Gallery and Google Photos find them.")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        option("Convert HEIC photos to JPEG", "Every Android phone can show JPEG; some older ones can't open HEIC.", $androidJPEG)
+                    }
+                }
+            } else {
             sectionTitle("1", "Where should the copies go?")
             Card {
                 VStack(alignment: .leading, spacing: 10) {
@@ -87,6 +106,7 @@ struct ExportSheet: View {
             }
             .animation(.spring(response: 0.35, dampingFraction: 0.85), value: destination)
 
+            }
             sectionTitle("2", "Options")
             VStack(alignment: .leading, spacing: 12) {
                 option("Skip items already in this folder", "Safe to run again: anything copied before is left alone, not duplicated.", $m.options.skipExisting)
@@ -159,7 +179,11 @@ struct ExportSheet: View {
                 }
             }
 
-            if let albumID = request.albumID, destination != nil {
+            if target == nil && !m.isAndroid {
+                option("Remove from the \(m.deviceKind) after copying", "Only items whose copy is confirmed in the folder. You'll be asked once more before anything is removed.", $removeAfter)
+            }
+
+            if let albumID = request.albumID, destination != nil, target == nil {
                 VStack(alignment: .leading, spacing: 6) {
                     option("Save as a one-click hop", "Shows on the home screen; next time it copies only what's new.", $saveHop)
                     if saveHop {
@@ -180,7 +204,15 @@ struct ExportSheet: View {
                 Spacer()
                 Button("Cancel") { dismiss() }.buttonStyle(SoftButtonStyle()).keyboardShortcut(.cancelAction)
                 Button {
+                    if let target {
+                        var o = m.options
+                        o.convertHEIC = androidJPEG
+                        dismiss()
+                        m.startAndroidHop(request.assets, to: target, albumName: request.albumName, options: o)
+                        return
+                    }
                     guard let destination else { return }
+                    m.options.removeAfterCopy = removeAfter
                     let assets = request.assets
                     if saveHop, let id = request.albumID {
                         m.savePreset(name: hopName.isEmpty ? request.albumName : hopName, albumID: id, destination: destination, options: m.options, auto: autoHop)
@@ -190,7 +222,7 @@ struct ExportSheet: View {
                 } label: { Label("Copy \(Fmt.count(request.assets.count)) Item\(request.assets.count == 1 ? "" : "s")", systemImage: "arrow.down.circle.fill") }
                 .buttonStyle(PrimaryButtonStyle())
                 .keyboardShortcut(.defaultAction)
-                .disabled(destination == nil || lowSpace)
+                .disabled((destination == nil && target == nil) || lowSpace)
             }
         }
         .padding(24)
@@ -286,9 +318,12 @@ struct SummarySheet: View {
     let summary: ExportSummary
     @Environment(\.dismiss) private var dismiss
     @State private var shown = false
+    @State private var askRemove = false
+    @State private var removeNote = ""
 
     private var title: String {
         if summary.fatalError != nil { return "The export couldn't start" }
+        if summary.sentTo != nil && !summary.cancelled { return summary.sendFailures.isEmpty && summary.failures.isEmpty ? "Sent" : "Sent, with problems" }
         if summary.stalled { return "The \(m.deviceKind) stopped responding" }
         if summary.disconnected { return "The \(m.deviceKind) was disconnected" }
         if summary.cancelled { return "Export stopped" }
@@ -300,6 +335,10 @@ struct SummarySheet: View {
         if summary.stalled { return "Everything copied so far is safe. It usually means the \(m.deviceKind) locked itself: unlock it, then export to the same folder to continue." }
         if summary.disconnected { return "Everything copied so far is safe. Plug it back in and export to the same folder to continue where it stopped." }
         if summary.cancelled { return "Everything copied so far is safe. Export to the same folder again to continue where it stopped." }
+        if let to = summary.sentTo {
+            return "\(Fmt.count(summary.sentCount)) sent to \(to)" + (summary.sentAlready > 0 ? ", \(Fmt.count(summary.sentAlready)) already there" : "")
+                + (summary.sendFailures.isEmpty ? "." : ". \(Fmt.count(summary.sendFailures.count)) couldn't be sent: \(summary.sendFailures.prefix(3).joined(separator: ", ")).")
+        }
         var s = "\(Fmt.bytes(summary.bytesCopied)) saved to “\(summary.destination.lastPathComponent)”"
         if summary.elapsed >= 1 { s += " in \(Fmt.duration(summary.elapsed))" }
         return s + "."
@@ -324,7 +363,14 @@ struct SummarySheet: View {
                 Text(subtitle).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            if summary.fatalError == nil {
+            if summary.fatalError == nil && summary.sentTo != nil {
+                HStack(spacing: 10) {
+                    stat(summary.sentCount, "Sent", .green, 0)
+                    stat(summary.sentAlready, "Already on the phone", .blue, 1)
+                    let missed = summary.failures.count + summary.sendFailures.count
+                    stat(missed, "Couldn't send", missed == 0 ? .secondary : .orange, 2)
+                }
+            } else if summary.fatalError == nil {
                 HStack(spacing: 10) {
                     stat(summary.copied, "Copied", .green, 0)
                     stat(summary.skipped, "Already there", .blue, 1)
@@ -359,8 +405,28 @@ struct SummarySheet: View {
                 }
                 .buttonStyle(.plain).foregroundStyle(Theme.accentLight)
             }
+            if summary.options?.removeAfterCopy == true && summary.sentTo == nil && summary.fatalError == nil && summary.copied + summary.skipped > 0 {
+                VStack(spacing: 6) {
+                    if removeNote.isEmpty {
+                        Button { askRemove = true } label: {
+                            if m.cleanupBusy { ProgressView().controlSize(.small) } else { Label("Remove the Copied Items from the \(m.deviceKind)…", systemImage: "trash") }
+                        }
+                        .buttonStyle(SoftButtonStyle()).disabled(m.cleanupBusy || !m.isReady)
+                    } else {
+                        Text(removeNote).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    }
+                }
+                .confirmationDialog("Remove the copied items from \(m.deviceName)?", isPresented: $askRemove, titleVisibility: .visible) {
+                    Button("Remove from \(m.deviceKind)", role: .destructive) {
+                        if let o = summary.options { m.removeCopiedFromIPhone(summary, options: o) { removeNote = $0 } }
+                    }
+                    Button("Keep Them", role: .cancel) {}
+                } message: {
+                    Text("Only items whose copy in “\(summary.destination.lastPathComponent)” is complete are removed, the way Image Capture removes them. Keep the \(m.deviceKind) unlocked. PortHop can't bring removed items back; on recent iOS they may still be in Recently Deleted.")
+                }
+            }
             HStack {
-                if summary.fatalError == nil {
+                if summary.fatalError == nil && summary.sentTo == nil {
                     Button { NSWorkspace.shared.open(summary.destination) } label: { Label("Show in Finder", systemImage: "folder") }
                         .buttonStyle(SoftButtonStyle())
                 }

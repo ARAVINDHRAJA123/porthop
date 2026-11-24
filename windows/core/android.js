@@ -123,6 +123,80 @@ async function mkdir(p, device, tools) {
   return ((await shell(`mkdir ${sh(p)} && echo made`, device, tools)) || '').includes('made');
 }
 
+async function mkdirs(p, device, tools) {
+  return ((await shell(`mkdir -p ${sh(p)} && echo made`, device, tools)) || '').includes('made');
+}
+
+const chunks = (list, n) => { const out = []; for (let i = 0; i < list.length; i += n) out.push(list.slice(i, i + n)); return out; };
+
+/// Asks the phone's media index to pick up new or removed files, so the Gallery and music apps show the change.
+/// Android 11 and later notice files themselves; older versions need this.
+async function scan(paths, device, tools) {
+  for (const c of chunks(paths, 40)) {
+    await shell(c.map((p) => `am broadcast -a android.intent.action.MEDIA_SCANNER_SCAN_FILE -d ${sh('file://' + p)} >/dev/null`).join('; '), device, tools, 60);
+  }
+}
+
+/// Deletes files from the phone. Resolves to the paths that are gone afterwards.
+async function remove(paths, device, tools) {
+  const gone = [];
+  for (const c of chunks(paths, 40)) {
+    const out = (await shell(c.map((p) => `rm -f -- ${sh(p)} && [ ! -e ${sh(p)} ] && echo ${sh('GONE ' + p)}`).join('; '), device, tools, 120)) || '';
+    for (const line of out.split('\n')) if (line.startsWith('GONE ')) gone.push(line.slice(5));
+  }
+  await scan(gone, device, tools);
+  return gone;
+}
+
+/// Every file in a phone folder and the folders inside it, with sizes (for checking copies before deleting).
+async function filesBelow(dir, device, tools) {
+  const out = [], todo = [dir];
+  while (todo.length && out.length < 200000) {
+    for (const e of await list(todo.pop(), device, tools)) { if (e.isDirectory) todo.push(e.path); else out.push(e); }
+  }
+  return out;
+}
+
+/// Sends every file in a computer folder to a phone folder, keeping the layout inside it. A file already there with the same
+/// name and size is left alone; a different file with the same name gets " (2)". The Gallery is told about new files.
+async function sendFolder(local, remoteRoot, phone, tools, job, progress = () => {}) {
+  const files = [];
+  const walk = (d) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      if (e.name.startsWith('.')) continue;
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p); else if (e.isFile()) files.push(p);
+    }
+  };
+  walk(local);
+  files.sort();
+  let sent = 0, already = 0;
+  const failed = [], scanned = [], listed = new Map();
+  for (let i = 0; i < files.length; i++) {
+    if (job && job.cancelled) break;
+    progress(i, files.length);
+    const file = files[i];
+    const rel = path.relative(local, path.dirname(file)).split(path.sep).join('/');
+    const dir = rel ? `${remoteRoot}/${rel}` : remoteRoot;
+    if (!listed.has(dir)) {
+      await mkdirs(dir, phone, tools);
+      listed.set(dir, new Map((await list(dir, phone, tools)).map((e) => [e.name, e.size])));
+    }
+    const here = listed.get(dir), size = fs.statSync(file).size, name = path.basename(file);
+    if (here.get(name) === size) { already++; continue; }
+    const before = new Set(here.keys()), existing = new Set(before);
+    if (await push(file, dir, existing, phone, tools, job)) {
+      const used = [...existing].find((n) => !before.has(n)) || name;
+      sent++;
+      scanned.push(`${dir}/${used}`);
+      here.set(used, size);
+    } else failed.push(name);
+  }
+  progress(files.length, files.length);
+  await scan(scanned, phone, tools);
+  return { sent, already, failed };
+}
+
 async function power(action, device, tools) {
   if (action === 'restart') return (await run(tools.adb, [...args(device), 'reboot'], { timeout: 20 })).ok;
   if (action === 'sleep') return (await shell('input keyevent 223', device, tools)) != null;
@@ -151,4 +225,4 @@ function parseMediaAlbums(out) {
     .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 
-module.exports = { ROOT, mediaAlbums, parseMediaAlbums, findDevices, name, details, list, pull, push, mkdir, power, wireless };
+module.exports = { ROOT, args, sh, shell, mediaAlbums, parseMediaAlbums, findDevices, name, details, list, pull, push, mkdir, mkdirs, scan, remove, filesBelow, sendFolder, power, wireless };

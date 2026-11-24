@@ -1,2 +1,20 @@
 #!/bin/sh
-printf "com.example.player\tMovie Player\ncom.example.reader\tBook Reader\n"
+# Stand-in for PortHop's applist helper: the simulated iPhone's apps, installs, removals and the Wi-Fi setting.
+udid="$1"; shift
+[ "$1" = "-n" ] && shift
+case "$1" in
+  --all) printf "com.example.player\tMovie Player\t2.4\t1048576\ncom.example.reader\tBook Reader\t1.0\t2048\ncom.example.notes\tTabs & Notes\t1.0\t0\n" ;;
+  --install)
+    case "$2" in
+      *.ipa) [ -f "$2" ] || { echo "ERROR: could not open the file" >&2; exit 1; }
+             case "$2" in *unsigned*) echo "PROGRESS 5"; echo "ERROR: ApplicationVerificationFailed: Failed to verify code signature" >&2; exit 1 ;; esac
+             echo "PROGRESS 5"; echo "PROGRESS 50"; echo "PROGRESS 100"; echo "OK" ;;
+      *) echo "ERROR: could not open the file" >&2; exit 1 ;;
+    esac ;;
+  --uninstall) [ "$2" = "com.example.player" ] && echo OK || { echo "ERROR: UninstallProhibited" >&2; exit 1; } ;;
+  --wifi)
+    f="$FAKE_PHONE/.wifi"
+    [ -n "$2" ] && echo "$2" > "$f"
+    [ -f "$f" ] && cat "$f" || echo off ;;
+  *) printf "com.example.player\tMovie Player\ncom.example.reader\tBook Reader\n" ;;
+esac

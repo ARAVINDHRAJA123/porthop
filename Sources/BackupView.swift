@@ -8,6 +8,7 @@ struct BackupView: View {
     @State private var restoreTarget: BackupEntry?
     @AppStorage("autoBackup") private var autoBackup = false
     @AppStorage("keepSnapshots") private var keepSnapshots = true
+    @AppStorage("wifiBackup") private var wifiBackup = false
     @State private var confirmStopRestore = false
 
     private var usedOnDevice: Int64 { max(0, m.details.totalDiskBytes - m.details.freeDiskBytes) }
@@ -122,8 +123,17 @@ struct BackupView: View {
                                 Toggle("Back up when plugged in, once a day", isOn: $autoBackup).toggleStyle(.switch).controlSize(.mini)
                                 Toggle("Keep earlier versions", isOn: $keepSnapshots).toggleStyle(.switch).controlSize(.mini)
                                     .help("Before each backup the previous one is kept as a snapshot. On APFS drives this takes almost no space; the newest 7 are kept.")
+                                Toggle("Also back up over Wi-Fi, once a day", isOn: Binding(get: { wifiBackup }, set: { wifiBackup = $0; m.setWiFiBackups($0) }))
+                                    .toggleStyle(.switch).controlSize(.mini)
+                                    .help("Turns on “Show this iPhone when on Wi-Fi” on the iPhone. While PortHop is open, an iPhone on the same Wi-Fi is then backed up once a day without the cable.")
+                                if wifiBackup, m.phoneWiFiSync == false {
+                                    Text("The iPhone's Wi-Fi setting is off: plug it in once to turn it on.").foregroundStyle(Theme.warning)
+                                }
                             }
                             .font(.caption)
+                            Button { m.selection = "nav_check" } label: { Label("Spyware Check", systemImage: "checkmark.shield") }
+                                .buttonStyle(SoftButtonStyle())
+                                .help("Checks the newest backup for traces of known spyware")
                             Button { m.startBackup() } label: { Label("Back Up Now", systemImage: "arrow.down.circle.fill") }
                                 .buttonStyle(PrimaryButtonStyle())
                                 .disabled(m.isExporting || m.afcBusy || m.tools?.backup == nil)

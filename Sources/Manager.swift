@@ -17,7 +17,7 @@ final class DeviceManager: ObservableObject {
     @Published var phase: Phase = .searching
     @Published var deviceName = "iPhone"
     @Published var details = DeviceDetails()
-    @Published private(set) var device: Device?
+    @Published private(set) var device: Device? { didSet { if oldValue?.udid != device?.udid { clearDeviceTools() } } }
     @Published private(set) var devices: [Device] = []
     @Published private(set) var deviceNames: [String: String] = [:]
     private var preferredUDID: String?
@@ -119,6 +119,8 @@ final class DeviceManager: ObservableObject {
         /// The whole group being copied (set only when every item in it is included), for saved hops and {album}.
         var albumID: String? = nil
         var albumName = ""
+        /// Set when the group goes straight to a connected Android phone instead of a folder.
+        var androidTarget: Device? = nil
     }
 
     var isReady: Bool { phase == .ready }
@@ -217,6 +219,7 @@ final class DeviceManager: ObservableObject {
         BackupReader.purgeTemp()
         connect(silent: false)
         checkForUpdatesIfDue()
+        startWiFiBackupWatch()
         pollTimer?.invalidate()
         pollTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.poll() }
@@ -425,6 +428,7 @@ final class DeviceManager: ObservableObject {
             }
         }
         else if action.hasPrefix("select:") { selection = String(action.dropFirst(7)) }
+        else if action == "spycheck" { selection = "nav_check"; backups = Backup.existing(in: backupFolder); loadSpySources(); runSpywareCheck() }
         else if action.hasPrefix("backup:") { backupFolder = URL(fileURLWithPath: String(action.dropFirst(7))); selection = "nav_backup"; startBackup() }
     }
     private var didRunLaunchAction = false
@@ -464,6 +468,14 @@ final class DeviceManager: ObservableObject {
         let n = album.assets.count
         exportRequest = ExportRequest(assets: album.assets, title: "Copy \(Fmt.count(n)) item\(n == 1 ? "" : "s") from \(album.title)",
                                       destination: destination, albumID: album.id, albumName: album.title)
+    }
+
+    /// A group dropped on the Android phone card: the copy sheet, aimed at the phone.
+    func requestAndroidHop(_ album: AlbumCategory, to phone: Device) {
+        guard !album.assets.isEmpty, !isExporting else { return }
+        let n = album.assets.count
+        exportRequest = ExportRequest(assets: album.assets, title: "Send \(Fmt.count(n)) item\(n == 1 ? "" : "s") from \(album.title) to \(deviceNames[phone.udid] ?? "the Android phone")",
+                                      destination: nil, albumID: album.id, albumName: album.title, androidTarget: phone)
     }
 
     /// Android storage folders dropped on a destination are copied whole.
@@ -519,12 +531,14 @@ final class DeviceManager: ObservableObject {
         autoHopRunning = nil
         var lastEmit = Date.distantPast
         Task.detached {
-            let result = Exporter.run(assets: assets, destination: destination, options: opts, device: device, tools: tools, job: job) { p in
+            var ran = Exporter.run(assets: assets, destination: destination, options: opts, device: device, tools: tools, job: job) { p in
                 let now = Date()
                 if now.timeIntervalSince(lastEmit) < 0.15 && p.processed < p.total { return }
                 lastEmit = now
                 Task { @MainActor in if self.isExporting { self.progress = p } }
             }
+            ran.options = opts
+            let result = ran
             await MainActor.run {
                 self.isExporting = false
                 self.isStopping = false
@@ -575,4 +589,31 @@ final class DeviceManager: ObservableObject {
     var awakeToken: NSObjectProtocol?
     @Published var powerMessage = ""
     @Published var restoring = false
+
+    // MARK: State used by ManagerTools (spyware check, apps, music, cleanup, Wi-Fi backups, updates)
+
+    @Published var spySources: [Spyware.Source] = []
+    @Published var spyReport: Spyware.Report?
+    @Published var spyReportFor = ""
+    @Published var spyBusy = false
+    @Published var spyMessage = ""
+    @Published var spyNeedsPassword = false
+    @Published var installedApps: [InstalledApp] = []
+    @Published var appsLoaded = false
+    @Published var appsBusy = false
+    @Published var appsMessage = ""
+    @Published var appsMessageIsError = false
+    @Published var songs: [Song] = []
+    @Published var musicLoaded = false
+    @Published var musicBusy = false
+    @Published var musicMessage = ""
+    var musicJob: ExportJob?
+    /// Phone folders just copied to the Mac (Android), offered for removal from the phone once the copies are checked.
+    @Published var androidCopied: [Cleanup.AndroidPair] = []
+    @Published var cleanupBusy = false
+    @Published var phoneWiFiSync: Bool?
+    var wifiTimer: Timer?
+    /// When each iPhone was last tried over Wi-Fi, so a backup that can't finish isn't retried every ten minutes.
+    var wifiTried: [String: Date] = [:]
+    @Published var updateStatus = ""
 }

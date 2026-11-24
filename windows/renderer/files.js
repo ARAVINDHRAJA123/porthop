@@ -64,7 +64,7 @@ function filesView() {
   const el = viewBox(h('div', { class: 'head' }, h('div', { class: 'big', style: `background:${isAndroid() ? '#3ecf74' : appId ? '#35c9a5' : '#8a8894'}` }, icon(appId ? 'app' : 'folder')),
     h('div', {}, h('h2', {}, title), h('div', { class: 'dim' }, isAndroid() ? "Everything in the device's shared storage: Camera (DCIM), Pictures, Download and more. Drag files in, or copy them out."
       : appId ? `Files you add here appear inside ${appName} on your ${kindWord()}. Drag files in, or copy them out.` : 'The media area the device shares over USB. You can copy from here, but not add to it. For photos, use the albums on the left.'))),
-    crumbs, table.el, h('div', { class: 'actionbar' }, msg, buttons));
+    crumbs, table.el, h('div', { class: 'actionbar' }, msg, removeCopiedButton(), buttons));
   el.addEventListener('dragover', (e) => { if (cur.canAdd && !busy) { e.preventDefault(); el.classList.add('drop'); } });
   el.addEventListener('dragleave', () => el.classList.remove('drop'));
   el.addEventListener('drop', (e) => { e.preventDefault(); el.classList.remove('drop'); if (cur.canAdd && !busy) upload([...e.dataTransfer.files].map((f) => api.pathOf(f)).filter(Boolean)); });
@@ -118,6 +118,9 @@ function backupView() {
       h('div', { class: 'foot' }, h('button', { class: 'btn', onclick: closeModal }, 'Cancel'), goBtn)));
   }
   const autoBox = h('input', { type: 'checkbox', onchange: (e) => api.call('backup:auto', e.target.checked) });
+  const wifiNote = h('span', { class: 'dim' });
+  const wifiBox = h('input', { type: 'checkbox', onchange: async (e) => { const r = await api.call('backup:wifi', e.target.checked); showWifi(r); } });
+  const showWifi = (r) => { wifiBox.checked = !!(r && r.on); wifiNote.textContent = r && r.on && r.phone === false ? ' The iPhone’s Wi-Fi setting is off: plug it in once to turn it on.' : ''; };
   async function run(restore) {
     restoringNow = !!restore;
     backupRunning = true; start.classList.add('hidden'); stop.classList.remove('hidden'); stop.disabled = false; bar.classList.remove('hidden'); bar.removeAttribute('value');
@@ -136,6 +139,7 @@ function backupView() {
     folderText.textContent = '‎' + state.backupFolder;
     drawList(await api.call('backup:list'));
     autoBox.checked = await api.call('backup:auto');
+    showWifi(await api.call('backup:wifi'));
     if (pendingAutoBackup && state.canBackup && !backupRunning) run();
     for (const d of await api.call('drives')) drivesRow.append(h('button', { class: 'chip', onclick: () => setFolder(d.path + (/[\\/]$/.test(d.path) ? '' : '/') + 'Phone Backups') }, `${d.name} · ${bytes(d.free)} free`));
   })();
@@ -146,6 +150,9 @@ function backupView() {
     h('div', { class: 'card', style: 'margin-top:16px' }, h('h3', {}, 'Back up now'),
       h('div', { class: 'dim', style: 'margin-bottom:12px' }, `Keep the ${kindWord()} connected and unlocked. The first backup can take a long time; later ones only copy what changed. Nothing on the ${kindWord()} is changed or removed.`),
       state.canBackup ? h('div', { style: 'display:flex;gap:10px' }, start, stop) : h('div', { class: 'note' }, 'The backup tool is missing from this copy of the app.'), h('div', { style: 'margin-top:12px' }, bar), status,
-      h('label', { style: 'margin-top:10px;display:flex;gap:8px;align-items:center' }, autoBox, `Back up when this ${kindWord()} is plugged in, once a day (iOS asks for the passcode to start)`)),
+      h('label', { style: 'margin-top:10px;display:flex;gap:8px;align-items:center' }, autoBox, `Back up when this ${kindWord()} is plugged in, once a day (iOS asks for the passcode to start)`),
+      h('label', { style: 'margin-top:6px;display:flex;gap:8px;align-items:center', title: 'Turns on “Show this iPhone when on Wi-Fi” on the iPhone. While PortHop is open, an iPhone on the same Wi-Fi is then backed up once a day without the cable.' },
+        wifiBox, 'Also back up over Wi-Fi, once a day', wifiNote),
+      h('button', { class: 'btn', style: 'margin-top:12px', onclick: () => go('nav_check') }, icon('shield'), 'Check the Newest Backup for Spyware')),
     h('div', { class: 'card', style: 'margin-top:16px' }, h('h3', {}, 'Backups in this folder'), list))));
 }

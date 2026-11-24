@@ -77,8 +77,9 @@ extension DeviceManager {
         }
     }
 
-    func startBackup(automatic: Bool = false) {
-        guard let device, let tools, !device.isAndroid, !backupRunning, !isExporting, !afcBusy else { return }
+    /// Backs up the connected iPhone, or `target` (an iPhone reached over Wi-Fi in the background).
+    func startBackup(automatic: Bool = false, target: Device? = nil) {
+        guard let device = target ?? device, let tools, !device.isAndroid, !backupRunning, !isExporting, !afcBusy else { return }
         let keepVersions = UserDefaults.standard.object(forKey: "keepSnapshots") as? Bool ?? true
         let job = ExportJob()
         backupJob = job
@@ -109,7 +110,8 @@ extension DeviceManager {
                 self.backupFailed = problem != nil
                 self.backupMessage = problem ?? "Backup complete."
                 if problem == nil { NSSound(named: "Glass")?.play() }
-                if automatic { Notify.post(problem == nil ? "Backup complete" : "The automatic backup didn't finish", problem ?? "\(self.deviceName) is backed up.") }
+                let who = target.map { self.deviceNames[$0.udid] ?? "Your iPhone" } ?? self.deviceName
+                if automatic { Notify.post(problem == nil ? (target == nil ? "Backup complete" : "Backed up over Wi-Fi") : "The automatic backup didn't finish", problem ?? "\(who) is backed up.") }
                 self.refreshBackups()
             }
         }
